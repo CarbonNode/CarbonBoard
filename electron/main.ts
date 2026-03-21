@@ -136,7 +136,7 @@ function initDatabase() {
     lockOutputToCable: true, // Default to auto-lock CABLE
     stopAllHotkey: 'Ctrl+Shift+Space',
     pauseResumeHotkey: '',
-    allowConcurrentPlayback: true,
+    allowConcurrentPlayback: false,
     minimizeToTray: true,
     startMinimized: false,
     startWithWindows: false,

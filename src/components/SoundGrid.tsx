@@ -41,15 +41,20 @@ export function SoundGrid() {
 
   // Filter sounds based on category and search (exclude sub-soundbites from top level)
   const filteredSounds = useCallback(() => {
-    let sounds = state.sounds.filter((s) => !s.parentSoundId);
+    let sounds: Sound[];
 
-    // Filter by category
+    // For favorites, include favorited sub-sounds as standalone items
     if (state.selectedCategoryId === 'favorites') {
-      sounds = sounds.filter((s) => s.favorite);
-    } else if (state.selectedCategoryId === 'uncategorized') {
-      sounds = sounds.filter((s) => !s.categoryId);
-    } else if (state.selectedCategoryId) {
-      sounds = sounds.filter((s) => s.categoryId === state.selectedCategoryId);
+      sounds = state.sounds.filter((s) => s.favorite);
+    } else {
+      // Exclude sub-soundbites from normal views (they render under their parent)
+      sounds = state.sounds.filter((s) => !s.parentSoundId);
+
+      if (state.selectedCategoryId === 'uncategorized') {
+        sounds = sounds.filter((s) => !s.categoryId);
+      } else if (state.selectedCategoryId) {
+        sounds = sounds.filter((s) => s.categoryId === state.selectedCategoryId);
+      }
     }
 
     // Filter by search

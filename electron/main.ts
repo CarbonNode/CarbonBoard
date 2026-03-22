@@ -956,6 +956,7 @@ if (!gotTheLock) {
             name: s.name,
             categoryId: s.categoryId,
             subCategoryId: s.subCategoryId,
+            parentSoundId: s.parentSoundId,
             duration: s.duration,
             favorite: s.favorite,
             volume: s.volume,

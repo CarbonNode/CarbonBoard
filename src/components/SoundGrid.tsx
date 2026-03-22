@@ -327,11 +327,7 @@ export function SoundGrid() {
             const items = [renderSoundItem(sound)];
             const subs = subSoundsMap.get(sound.id);
             if (subs && subs.length > 0 && state.expandedSoundIds.has(sound.id)) {
-              items.push(
-                <div key={`${sound.id}-subs`} className="col-span-full ml-6 grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2 py-1">
-                  {subs.map(renderSoundItem)}
-                </div>
-              );
+              items.push(...subs.map(renderSoundItem));
             }
             return items;
           })}

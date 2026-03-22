@@ -26,7 +26,7 @@ import type { Category, SubCategory, Sound, Settings } from './types';
 // ============================================================
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.squeetboard.app');
+  app.setAppUserModelId('com.carbonboard.app');
 }
 
 // ============================================================
@@ -41,10 +41,10 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const isDev = !app.isPackaged;
 let isQuitting = false; // Track if app is quitting (for minimize to tray)
-const APP_DATA_PATH = path.join(app.getPath('userData'), 'squeetboard-data');
+const APP_DATA_PATH = path.join(app.getPath('userData'), 'carbonboard-data');
 const SOUNDS_PATH = path.join(APP_DATA_PATH, 'sounds');
 const THUMBNAILS_PATH = path.join(APP_DATA_PATH, 'thumbnails');
-const DB_PATH = path.join(APP_DATA_PATH, 'squeetboard.db');
+const DB_PATH = path.join(APP_DATA_PATH, 'carbonboard.db');
 
 // Ensure directories exist
 [APP_DATA_PATH, SOUNDS_PATH, THUMBNAILS_PATH].forEach((dir) => {
@@ -650,7 +650,7 @@ function createTray(): void {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Squeetboard',
+      label: 'Show CarbonBoard',
       click: () => {
         mainWindow?.show();
         mainWindow?.focus();
@@ -671,7 +671,7 @@ function createTray(): void {
     },
   ]);
 
-  tray.setToolTip('Squeetboard');
+  tray.setToolTip('CarbonBoard');
   tray.setContextMenu(contextMenu);
 
   tray.on('double-click', () => {
@@ -1023,14 +1023,14 @@ if (!gotTheLock) {
     });
 
     server.listen(API_PORT, () => {
-      console.log(`Squeetboard API listening on port ${API_PORT}`);
+      console.log(`CarbonBoard API listening on port ${API_PORT}`);
     });
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        console.warn(`Squeetboard API port ${API_PORT} in use, skipping.`);
+        console.warn(`CarbonBoard API port ${API_PORT} in use, skipping.`);
       } else {
-        console.error('Squeetboard API error:', err);
+        console.error('CarbonBoard API error:', err);
       }
     });
   }

@@ -1,9 +1,9 @@
 {
-  "name": "squeetboard",
+  "name": "carbonboard",
   "version": "1.0.0",
   "description": "Windows soundboard app with virtual audio cable support",
   "main": "electron/main.js",
-  "author": "Squeetboard",
+  "author": "CarbonBoard",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -44,8 +44,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.squeetboard.app",
-    "productName": "Squeetboard",
+    "appId": "com.carbonboard.app",
+    "productName": "CarbonBoard",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -81,7 +81,7 @@
         "nsis"
       ],
       "icon": "icon.ico",
-      "signAndEditExecutable": true
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

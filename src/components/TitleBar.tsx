@@ -12,7 +12,7 @@ export function TitleBar() {
   return (
     <div className="titlebar-drag h-10 bg-bg-secondary flex items-center justify-between px-4 border-b border-bg-tertiary">
       <div className="flex items-center gap-3">
-        <span className="text-accent font-bold text-lg">Squeetboard</span>
+        <span className="text-accent font-bold text-lg">CarbonBoard</span>
         {state.playingSounds.size > 0 && (
           <button
             onClick={stopAllSounds}

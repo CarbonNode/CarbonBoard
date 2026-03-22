@@ -6,7 +6,7 @@ import { WaveformVisualizer } from './WaveformVisualizer';
 import type { Sound } from '../../shared/types';
 
 export function SoundEditor() {
-  const { state, dispatch, updateSound, previewSound, stopPreview, createSubSoundbite } = useApp();
+  const { state, dispatch, updateSound, previewSound, stopPreview, getPreviewAudio, createSubSoundbite } = useApp();
   const sound = state.editingSound;
 
   const [name, setName] = useState('');
@@ -18,6 +18,8 @@ export function SoundEditor() {
   const [isRecordingHotkey, setIsRecordingHotkey] = useState(false);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [duration, setDuration] = useState(0);
+  const [playbackPosition, setPlaybackPosition] = useState<number | null>(null);
+  const playbackAnimRef = useRef<number | null>(null);
 
   // Load sound data when editing sound changes
   useEffect(() => {
@@ -69,7 +71,40 @@ export function SoundEditor() {
     }
   };
 
+  const stopPlaybackTracking = useCallback(() => {
+    if (playbackAnimRef.current) {
+      cancelAnimationFrame(playbackAnimRef.current);
+      playbackAnimRef.current = null;
+    }
+    setPlaybackPosition(null);
+  }, []);
+
+  const startPlaybackTracking = useCallback(() => {
+    stopPlaybackTracking();
+    const tick = () => {
+      const audio = getPreviewAudio();
+      if (audio && !audio.paused) {
+        setPlaybackPosition(audio.currentTime);
+        playbackAnimRef.current = requestAnimationFrame(tick);
+      } else {
+        setPlaybackPosition(null);
+        playbackAnimRef.current = null;
+      }
+    };
+    playbackAnimRef.current = requestAnimationFrame(tick);
+  }, [getPreviewAudio, stopPlaybackTracking]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (playbackAnimRef.current) {
+        cancelAnimationFrame(playbackAnimRef.current);
+      }
+    };
+  }, []);
+
   const handleClose = () => {
+    stopPlaybackTracking();
     stopPreview();
     dispatch({ type: 'SET_EDITING_SOUND', payload: null });
   };
@@ -132,7 +167,7 @@ export function SoundEditor() {
     }
   };
 
-  const handlePreview = () => {
+  const handlePreview = async () => {
     if (!sound) return;
 
     // Create a temporary sound object with current trim values
@@ -142,7 +177,8 @@ export function SoundEditor() {
       trimEnd,
       volume,
     };
-    previewSound(previewSoundData);
+    await previewSound(previewSoundData);
+    startPlaybackTracking();
   };
 
   if (!sound) return null;
@@ -190,6 +226,7 @@ export function SoundEditor() {
                 setTrimStart(start);
                 setTrimEnd(end);
               }}
+              playbackPosition={playbackPosition}
             />
             <div className="flex justify-between text-xs text-text-secondary mt-1">
               <span>Start: {formatTime(trimStart)}</span>
@@ -210,7 +247,7 @@ export function SoundEditor() {
               Preview
             </button>
             <button
-              onClick={stopPreview}
+              onClick={() => { stopPlaybackTracking(); stopPreview(); }}
               className="px-4 py-2 bg-bg-tertiary hover:bg-red-600/20 rounded-lg transition-colors flex items-center gap-2"
               title="Stop preview"
             >

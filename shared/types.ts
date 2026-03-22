@@ -1,5 +1,5 @@
 // ============================================================
-// Squeetboard Shared Types
+// CarbonBoard Shared Types
 // ============================================================
 
 export interface Category {

@@ -8,6 +8,7 @@ interface WaveformVisualizerProps {
   trimStart: number;
   trimEnd: number;
   onTrimChange: (start: number, end: number) => void;
+  playbackPosition?: number | null;
 }
 
 export function WaveformVisualizer({
@@ -16,6 +17,7 @@ export function WaveformVisualizer({
   trimStart,
   trimEnd,
   onTrimChange,
+  playbackPosition,
 }: WaveformVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,7 +104,20 @@ export function WaveformVisualizer({
     ctx.lineTo(trimEndX - 10, 0);
     ctx.lineTo(trimEndX, 10);
     ctx.fill();
-  }, [audioBuffer, duration, trimStart, trimEnd]);
+
+    // Playback position line
+    if (playbackPosition != null && playbackPosition >= 0) {
+      const posX = (playbackPosition / duration) * width;
+      ctx.fillStyle = '#00ff88';
+      ctx.fillRect(posX - 1, 0, 2, height);
+      // Small triangle at top
+      ctx.beginPath();
+      ctx.moveTo(posX - 5, 0);
+      ctx.lineTo(posX + 5, 0);
+      ctx.lineTo(posX, 7);
+      ctx.fill();
+    }
+  }, [audioBuffer, duration, trimStart, trimEnd, playbackPosition]);
 
   // Handle mouse events
   const handleMouseDown = useCallback(

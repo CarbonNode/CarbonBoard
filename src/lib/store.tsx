@@ -257,6 +257,7 @@ interface AppContextType {
   playSound: (sound: Sound) => Promise<void>;
   previewSound: (sound: Sound) => Promise<void>;
   stopPreview: () => void;
+  getPreviewAudio: () => HTMLAudioElement | null;
   stopSound: (soundId: string) => void;
   stopAllSounds: () => void;
   seekSound: (soundId: string, time: number) => void;
@@ -1357,6 +1358,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     playSound,
     previewSound,
     stopPreview,
+    getPreviewAudio: () => previewAudioRef.current,
     stopSound,
     stopAllSounds,
     seekSound,

@@ -333,9 +333,15 @@
       </div>
       <div class="dev-overlay" id="devOverlay"></div>
       <button class="stop-btn" id="hideBtn" style="background:#333;">HIDE</button>
-      <button class="stop-btn mic-toggle" id="noiseSuppBtn" style="background:#333;font-size:14px;min-width:32px;" title="Noise Suppression">🔇</button>
-      <button class="stop-btn mic-toggle" id="echoCancelBtn" style="background:#333;font-size:14px;min-width:32px;" title="Echo Cancellation">🔄</button>
-      <button class="stop-btn mic-toggle" id="autoGainBtn" style="background:#333;font-size:14px;min-width:32px;" title="Auto Gain Control">📊</button>
+      <button class="stop-btn mic-toggle" id="noiseSuppBtn" style="background:#333;min-width:32px;padding:6px;" title="Noise Suppression">
+        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/></svg>
+      </button>
+      <button class="stop-btn mic-toggle" id="echoCancelBtn" style="background:#333;min-width:32px;padding:6px;" title="Echo Cancellation">
+        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4l16 16"/></svg>
+      </button>
+      <button class="stop-btn mic-toggle" id="autoGainBtn" style="background:#333;min-width:32px;padding:6px;" title="Auto Gain Control">
+        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+      </button>
       <input type="range" class="size-slider" id="sizeSlider" min="50" max="250" value="0" title="Tile size (0 = auto)">
     </div>
     <div class="tabs" id="tabs"></div>
@@ -992,28 +998,47 @@ document.getElementById('hideBtn').addEventListener('click', (e) => {
 });
 
 // Mic audio processing toggles
-function setupMicToggle(btnId, settingKey) {
+const micToggles = [
+  { btnId: 'noiseSuppBtn', key: 'micNoiseSuppression' },
+  { btnId: 'echoCancelBtn', key: 'micEchoCancellation' },
+  { btnId: 'autoGainBtn', key: 'micAutoGainControl' },
+];
+
+function updateMicToggleStates() {
+  micToggles.forEach(({ btnId, key }) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    const on = cachedSettings && cachedSettings[key];
+    btn.style.background = on ? '#3b82f6' : '#333';
+    btn.style.opacity = on ? '1' : '0.5';
+  });
+}
+
+micToggles.forEach(({ btnId, key }) => {
   const btn = document.getElementById(btnId);
+  if (!btn) return;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const current = cachedSettings[settingKey] || false;
-    const newVal = !current;
-    cachedSettings[settingKey] = newVal;
-    btn.style.background = newVal ? '#3b82f6' : '#333';
+    if (!cachedSettings) cachedSettings = {};
+    const newVal = !cachedSettings[key];
+    cachedSettings[key] = newVal;
+    updateMicToggleStates();
     try {
       await fetch(location.origin + '/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [settingKey]: newVal }),
+        body: JSON.stringify({ [key]: newVal }),
       });
     } catch (err) { console.error('Toggle failed:', err); }
   });
-  // Set initial state
-  if (cachedSettings[settingKey]) btn.style.background = '#3b82f6';
-}
-setupMicToggle('noiseSuppBtn', 'micNoiseSuppression');
-setupMicToggle('echoCancelBtn', 'micEchoCancellation');
-setupMicToggle('autoGainBtn', 'micAutoGainControl');
+});
+
+// Update toggle states after settings load
+const origLoadDevices = loadDevices;
+loadDevices = async function() {
+  await origLoadDevices();
+  updateMicToggleStates();
+};
 
 // Start idle timer
 startIdleTimer();

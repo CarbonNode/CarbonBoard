@@ -214,25 +214,39 @@ export function BottomBar() {
                 await updateSettings({ micNoiseSuppression: !state.settings.micNoiseSuppression });
                 if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
               }}
-              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micNoiseSuppression ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              className={`p-1 flex-shrink-0 rounded transition-colors ${state.settings.micNoiseSuppression ? 'bg-accent text-white' : 'text-text-secondary opacity-50 hover:opacity-80'}`}
               title={`Noise Suppression: ${state.settings.micNoiseSuppression ? 'ON' : 'OFF'}`}
-            >🔇</button>
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+              </svg>
+            </button>
             <button
               onClick={async () => {
                 await updateSettings({ micEchoCancellation: !state.settings.micEchoCancellation });
                 if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
               }}
-              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micEchoCancellation ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              className={`p-1 flex-shrink-0 rounded transition-colors ${state.settings.micEchoCancellation ? 'bg-accent text-white' : 'text-text-secondary opacity-50 hover:opacity-80'}`}
               title={`Echo Cancellation: ${state.settings.micEchoCancellation ? 'ON' : 'OFF'}`}
-            >🔄</button>
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l16 16" />
+              </svg>
+            </button>
             <button
               onClick={async () => {
                 await updateSettings({ micAutoGainControl: !state.settings.micAutoGainControl });
                 if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
               }}
-              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micAutoGainControl ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              className={`p-1 flex-shrink-0 rounded transition-colors ${state.settings.micAutoGainControl ? 'bg-accent text-white' : 'text-text-secondary opacity-50 hover:opacity-80'}`}
               title={`Auto Gain Control: ${state.settings.micAutoGainControl ? 'ON' : 'OFF'}`}
-            >📊</button>
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
+            </button>
 
             <div className="flex items-center gap-1 flex-shrink-0">
               <svg className="w-3 h-3 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">

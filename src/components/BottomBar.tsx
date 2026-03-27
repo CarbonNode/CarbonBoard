@@ -208,6 +208,32 @@ export function BottomBar() {
               </svg>
             </button>
 
+            {/* Audio processing toggles */}
+            <button
+              onClick={async () => {
+                await updateSettings({ micNoiseSuppression: !state.settings.micNoiseSuppression });
+                if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
+              }}
+              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micNoiseSuppression ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              title={`Noise Suppression: ${state.settings.micNoiseSuppression ? 'ON' : 'OFF'}`}
+            >🔇</button>
+            <button
+              onClick={async () => {
+                await updateSettings({ micEchoCancellation: !state.settings.micEchoCancellation });
+                if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
+              }}
+              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micEchoCancellation ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              title={`Echo Cancellation: ${state.settings.micEchoCancellation ? 'ON' : 'OFF'}`}
+            >🔄</button>
+            <button
+              onClick={async () => {
+                await updateSettings({ micAutoGainControl: !state.settings.micAutoGainControl });
+                if (state.micPassthroughActive) { stopMicPassthrough(); setTimeout(() => startMicPassthrough(), 100); }
+              }}
+              className={`text-sm flex-shrink-0 rounded px-1 transition-colors ${state.settings.micAutoGainControl ? 'bg-accent/30' : 'opacity-40 hover:opacity-70'}`}
+              title={`Auto Gain Control: ${state.settings.micAutoGainControl ? 'ON' : 'OFF'}`}
+            >📊</button>
+
             <div className="flex items-center gap-1 flex-shrink-0">
               <svg className="w-3 h-3 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />

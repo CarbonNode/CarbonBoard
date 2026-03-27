@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#16213e">
+<title>CarbonBoard Remote</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #0f3460;
+    --accent: #e94560;
+    --text: #eee;
+    --text-dim: #777;
+    --playing: #00e676;
+    --fav: #ffd740;
+    --radius: 6px;
+    --tile-min: 90px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow-x: hidden;
+    overflow-y: auto;
+    touch-action: manipulation;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Top bar — sticky wrapper for header + tabs */
+  .top-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  /* Header */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .header h1 { font-size: 15px; font-weight: 600; white-space: nowrap; opacity: 0.7; }
+  .search {
+    flex: 0 1 140px; min-width: 80px;
+    background: var(--bg); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: var(--radius); padding: 5px 8px;
+    color: var(--text); font-size: 13px; outline: none;
+  }
+  .search::placeholder { color: var(--text-dim); }
+  .search:focus { border-color: var(--accent); }
+  .stop-btn {
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: white; font-size: 15px; font-weight: 700;
+    padding: 10px 20px; cursor: pointer; white-space: nowrap;
+    min-height: 40px;
+  }
+  .stop-btn:active { opacity: 0.6; transform: scale(0.95); }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #555; flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .status-dot.connected { background: var(--playing); }
+  .size-slider {
+    width: 60px; height: 24px;
+    -webkit-appearance: none; appearance: none;
+    background: var(--bg); border-radius: 12px;
+    outline: none; cursor: pointer;
+    flex-shrink: 0;
+  }
+  .size-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px;
+    background: var(--text); border-radius: 50%;
+    cursor: pointer;
+  }
+  .size-slider::-moz-range-thumb {
+    width: 18px; height: 18px;
+    background: var(--text); border-radius: 50%;
+    cursor: pointer; border: none;
+  }
+  .sound-count {
+    font-size: 10px; color: var(--text-dim); white-space: nowrap;
+  }
+
+  /* Category tabs */
+  .tabs {
+    /* inside sticky .top-bar, no need for own sticky */
+    display: flex; overflow-x: auto; gap: 0;
+    background: var(--surface);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    padding: 12px 20px; font-size: 15px; white-space: nowrap;
+    cursor: pointer; border: none; background: none;
+    color: var(--text-dim); border-bottom: 2px solid transparent;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .tab:active { opacity: 0.5; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+  /* Sound grid — fills viewport */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 4), 1fr);
+    grid-auto-rows: auto;
+    gap: 4px;
+    padding: 4px;
+    align-content: start;
+  }
+
+  /* Sound tile — height set by JS */
+  .sound {
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    border: 2px solid transparent;
+    transition: border-color 0.2s;
+    -webkit-user-select: none; user-select: none;
+    display: flex;
+    flex-direction: column;
+    height: var(--row-h, 120px);
+  }
+  .sound.playing { border-color: var(--playing); box-shadow: 0 0 8px rgba(0,230,118,0.3); }
+  .sound.tapped { background: var(--surface2); }
+  .sound .thumb-wrap {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    background: var(--surface2);
+    overflow: hidden;
+    position: relative;
+  }
+  .sound .thumb {
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+  }
+  .sound .placeholder {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; font-weight: 700;
+    color: rgba(255,255,255,0.15);
+  }
+  .sound .name {
+    padding: 4px 5px;
+    font-size: 11px;
+    line-height: 1.3;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .sound .fav-star {
+    position: absolute; top: 1px; right: 2px;
+    font-size: 9px; color: var(--fav);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    pointer-events: none;
+  }
+  .sound .sub-badge {
+    position: absolute; top: 1px; left: 2px;
+    background: rgba(0,0,0,0.7);
+    color: #aaa;
+    font-size: 8px;
+    padding: 0 3px;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  /* Sub-category headers */
+  .sub-header {
+    grid-column: 1 / -1;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    padding: 8px 4px 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* States */
+  .empty {
+    grid-column: 1 / -1;
+    text-align: center; padding: 40px 20px;
+    color: var(--text-dim); font-size: 13px;
+  }
+  .loading {
+    text-align: center; padding: 60px 20px;
+    color: var(--text-dim); font-size: 13px;
+  }
+  .disconnected-banner {
+    background: #b71c1c; color: white;
+    text-align: center; font-size: 11px;
+    padding: 4px; display: none;
+  }
+  .disconnected-banner.show { display: block; }
+
+  /* Small screens — tighter minimum */
+  @media (max-width: 400px) {
+    :root { --tile-min: 75px; }
+    .sound .name { font-size: 10px; }
+    .sound .placeholder { font-size: 22px; }
+  }
+
+  /* Category picker overlay — grid fills screen */
+  .cat-picker {
+    position: fixed; inset: 0; z-index: 200;
+    background: var(--bg);
+    display: none;
+    grid-template-columns: repeat(var(--cat-cols, 2), 1fr);
+    grid-auto-rows: 1fr;
+    gap: 6px;
+    padding: 6px;
+  }
+  .cat-picker.active { display: grid; }
+  .cat-pick-btn {
+    padding: 12px;
+    font-size: 18px; font-weight: 600;
+    background: var(--surface);
+    color: var(--text);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cat-pick-btn:active { opacity: 0.6; }
+  .cat-pick-btn.active { border-color: var(--accent); color: var(--accent); }
+
+  /* Device dropdown buttons */
+  .dev-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .dev-btn {
+    background: var(--surface2); border: none; border-radius: var(--radius);
+    color: var(--text-dim); font-size: 10px; font-weight: 600;
+    padding: 4px 8px; cursor: pointer; white-space: nowrap;
+    max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dev-btn:active { opacity: 0.6; }
+  .dev-btn .label { display: block; font-size: 8px; opacity: 0.5; text-transform: uppercase; }
+  .dev-dropdown {
+    display: none;
+    position: absolute; top: 100%; right: 0; z-index: 300;
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px; margin-top: 4px;
+    min-width: 220px; max-height: 300px; overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .dev-dropdown.open { display: block; }
+  .dev-option {
+    padding: 10px 12px; font-size: 13px; color: var(--text);
+    cursor: pointer; border: none; background: none;
+    width: 100%; text-align: left; display: block;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .dev-option:active, .dev-option:hover { background: var(--surface2); }
+  .dev-option.selected { color: var(--accent); font-weight: 600; }
+  .dev-overlay { position: fixed; inset: 0; z-index: 299; display: none; }
+  .dev-overlay.open { display: block; }
+
+  /* Screensaver */
+  .screensaver {
+    position: fixed; inset: 0; z-index: 999;
+    background: var(--bg);
+    display: none;
+    align-items: center; justify-content: center;
+    flex-direction: column;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .screensaver.active { display: flex; }
+  .screensaver .logo {
+    font-size: 48px; font-weight: 700;
+    color: rgba(255,255,255,0.25);
+    letter-spacing: 6px;
+    animation: pulse 4s ease-in-out infinite;
+  }
+  .screensaver .hint {
+    margin-top: 24px;
+    font-size: 16px;
+    color: rgba(255,255,255,0.15);
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+  <div class="screensaver" id="screensaver">
+    <div class="logo">CARBONBOARD</div>
+    <div class="hint">Tap to wake</div>
+  </div>
+  <div class="cat-picker" id="catPicker"></div>
+  <div class="disconnected-banner" id="dcBanner">Connection lost — retrying...</div>
+  <div class="top-bar">
+    <div class="header">
+      <div class="status-dot" id="statusDot" title="Disconnected"></div>
+      <h1>CB</h1>
+      <input class="search" id="search" type="search" placeholder="Search sounds..." autocomplete="off">
+      <span class="sound-count" id="soundCount"></span>
+      <button class="stop-btn" id="stopBtn">STOP</button>
+      <button class="stop-btn" id="catBtn" style="background:var(--surface2);">CATS</button>
+      <div class="dev-wrap">
+        <button class="dev-btn" id="outBtn"><span class="label">Output</span><span id="outLabel">—</span></button>
+        <div class="dev-dropdown" id="outDrop"></div>
+      </div>
+      <div class="dev-wrap">
+        <button class="dev-btn" id="monBtn"><span class="label">Monitor</span><span id="monLabel">—</span></button>
+        <div class="dev-dropdown" id="monDrop"></div>
+      </div>
+      <div class="dev-wrap">
+        <button class="dev-btn" id="micBtn"><span class="label">Mic</span><span id="micLabel">—</span></button>
+        <div class="dev-dropdown" id="micDrop"></div>
+      </div>
+      <div class="dev-overlay" id="devOverlay"></div>
+      <button class="stop-btn" id="hideBtn" style="background:#333;">HIDE</button>
+      <button class="stop-btn mic-toggle" id="noiseSuppBtn" style="background:#333;font-size:14px;min-width:32px;" title="Noise Suppression">🔇</button>
+      <button class="stop-btn mic-toggle" id="echoCancelBtn" style="background:#333;font-size:14px;min-width:32px;" title="Echo Cancellation">🔄</button>
+      <button class="stop-btn mic-toggle" id="autoGainBtn" style="background:#333;font-size:14px;min-width:32px;" title="Auto Gain Control">📊</button>
+      <input type="range" class="size-slider" id="sizeSlider" min="50" max="250" value="0" title="Tile size (0 = auto)">
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div class="grid" id="grid">
+    <div class="loading">Connecting...</div>
+  </div>
+
+<script>
+// =============================================
+// State
+// =============================================
+let categories = [];
+let subCategories = [];
+let allSounds = [];
+let activeCategoryId = null; // null = All
+let searchQuery = '';
+let playingTimers = {}; // soundId -> timeout handle
+let connected = false;
+let refreshTimer = null;
+let lastSoundsJson = '';
+let lastCatsJson = '';
+let gridBuilt = false; // track if we need full rebuild vs patch
+
+// =============================================
+// API
+// =============================================
+async function apiFetch(path) {
+  const res = await fetch(location.origin + path);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+async function apiPost(path) {
+  const res = await fetch(location.origin + path, { method: 'POST' });
+  return res.json();
+}
+
+// =============================================
+// Data loading
+// =============================================
+async function loadData() {
+  try {
+    const [catData, soundData] = await Promise.all([
+      apiFetch('/api/categories'),
+      apiFetch('/api/sounds'),
+    ]);
+    const newCatsJson = JSON.stringify(catData.categories);
+    const newSoundsJson = JSON.stringify(soundData.sounds);
+
+    const catsChanged = newCatsJson !== lastCatsJson;
+    const soundsChanged = newSoundsJson !== lastSoundsJson;
+
+    if (catsChanged) {
+      categories = catData.categories || [];
+      subCategories = [];
+      categories.forEach(c => {
+        if (c.subCategories) subCategories.push(...c.subCategories);
+      });
+      lastCatsJson = newCatsJson;
+      renderTabs();
+    }
+    if (soundsChanged) {
+      allSounds = soundData.sounds || [];
+      lastSoundsJson = newSoundsJson;
+      gridBuilt = false; // force full rebuild
+    }
+
+    setConnected(true);
+    renderGrid();
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+function setConnected(state) {
+  connected = state;
+  document.getElementById('statusDot').classList.toggle('connected', state);
+  document.getElementById('dcBanner').classList.toggle('show', !state);
+}
+
+// =============================================
+// Rendering — tabs
+// =============================================
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  let html = `<button class="tab${activeCategoryId === null ? ' active' : ''}" data-cat="__all">All</button>`;
+  html += `<button class="tab${activeCategoryId === '__favs' ? ' active' : ''}" data-cat="__favs">\u2605 Favs</button>`;
+  categories.sort((a, b) => a.order - b.order).forEach(cat => {
+    const count = allSounds.filter(s => s.categoryId === cat.id && !s.parentSoundId).length;
+    html += `<button class="tab${activeCategoryId === cat.id ? ' active' : ''}" data-cat="${cat.id}">${esc(cat.name)}${count ? ' <small style="opacity:0.5">' + count + '</small>' : ''}</button>`;
+  });
+  tabs.innerHTML = html;
+}
+
+// =============================================
+// Rendering — grid (DOM patching to avoid flicker)
+// =============================================
+function getFilteredSounds() {
+  const parentSounds = allSounds.filter(s => !s.parentSoundId);
+
+  let filtered;
+  if (activeCategoryId === '__favs') {
+    filtered = allSounds.filter(s => s.favorite);
+  } else if (activeCategoryId === null) {
+    filtered = parentSounds;
+  } else {
+    filtered = parentSounds.filter(s => s.categoryId === activeCategoryId);
+  }
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filtered = filtered.filter(s => s.name.toLowerCase().includes(q));
+  }
+
+  filtered.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  // Group by sub-category if viewing a specific category
+  if (activeCategoryId && activeCategoryId !== '__favs') {
+    const noSub = filtered.filter(s => !s.subCategoryId);
+    const subsByCat = {};
+    filtered.forEach(s => {
+      if (s.subCategoryId) {
+        if (!subsByCat[s.subCategoryId]) subsByCat[s.subCategoryId] = [];
+        subsByCat[s.subCategoryId].push(s);
+      }
+    });
+    const finalList = [...noSub];
+    subCategories
+      .filter(sc => sc.categoryId === activeCategoryId)
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .forEach(sc => {
+        const scSounds = subsByCat[sc.id];
+        if (scSounds && scSounds.length > 0) {
+          finalList.push({ _subHeader: sc.name, _id: 'sub_' + sc.id });
+          finalList.push(...scSounds);
+        }
+      });
+    return finalList;
+  }
+  return filtered;
+}
+
+// Color from string for placeholder backgrounds
+function strColor(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${h % 360}, 35%, 22%)`;
+}
+
+function buildSoundEl(s) {
+  const el = document.createElement('div');
+  el.className = 'sound';
+  el.dataset.id = s.id;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'thumb-wrap';
+
+  if (s.hasThumbnail) {
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = '/api/thumbnail/' + s.id;
+    img.onerror = function() {
+      // Replace with placeholder on error
+      this.replaceWith(makePlaceholder(s));
+    };
+    wrap.appendChild(img);
+  } else {
+    wrap.appendChild(makePlaceholder(s));
+  }
+
+  el.appendChild(wrap);
+
+  const nameDiv = document.createElement('div');
+  nameDiv.className = 'name';
+  nameDiv.textContent = s.name;
+  nameDiv.title = s.name;
+  el.appendChild(nameDiv);
+
+  if (s.favorite) {
+    const star = document.createElement('span');
+    star.className = 'fav-star';
+    star.textContent = '\u2605';
+    el.appendChild(star);
+  }
+
+  const subCount = allSounds.filter(x => x.parentSoundId === s.id).length;
+  if (subCount > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'sub-badge';
+    badge.textContent = '+' + subCount;
+    el.appendChild(badge);
+  }
+
+  return el;
+}
+
+function makePlaceholder(s) {
+  const ph = document.createElement('div');
+  ph.className = 'placeholder';
+  ph.style.background = strColor(s.name);
+  ph.textContent = s.name.charAt(0).toUpperCase();
+  return ph;
+}
+
+function buildSubHeader(item) {
+  const el = document.createElement('div');
+  el.className = 'sub-header';
+  el.dataset.id = item._id;
+  el.textContent = item._subHeader;
+  return el;
+}
+
+function calcGridSize(soundCount) {
+  if (soundCount === 0) return;
+  const grid = document.getElementById('grid');
+  const topBar = document.querySelector('.top-bar');
+  const headerH = topBar ? topBar.offsetHeight : 0;
+  const subHeaders = grid.querySelectorAll('.sub-header').length;
+  const availW = window.innerWidth - 8;
+  const availH = window.innerHeight - headerH - 8 - (subHeaders * 28);
+  const gap = 4;
+  const minTile = 60;
+
+  // For 1-2 sounds, don't stretch — use fixed square tiles
+  if (soundCount <= 2) {
+    grid.style.setProperty('--cols', soundCount);
+    grid.style.setProperty('--row-h', '150px');
+    grid.style.gridTemplateColumns = 'repeat(' + soundCount + ', 150px)';
+    return;
+  }
+  // Reset to 1fr columns for 3+
+  grid.style.gridTemplateColumns = '';
+
+  const maxTile = 9999;
+
+  let bestCols = 1;
+  let bestScore = Infinity;
+
+  for (let c = 1; c <= Math.min(soundCount, 20); c++) {
+    const r = Math.ceil(soundCount / c);
+    const tw = (availW - gap * (c - 1)) / c;
+    const th = (availH - gap * (r - 1)) / r;
+    if (tw < minTile || th < minTile) continue;
+    const ratio = tw > th ? tw / th : th / tw;
+    const waste = (c * r - soundCount) / soundCount;
+    const score = ratio + waste * 0.3;
+    if (score < bestScore) {
+      bestScore = score;
+      bestCols = c;
+    }
+  }
+
+  const bestRows = Math.ceil(soundCount / bestCols);
+  const rowH = Math.min(maxTile, Math.max(minTile, Math.floor((availH - gap * (bestRows - 1)) / bestRows)));
+
+  grid.style.setProperty('--cols', bestCols);
+  grid.style.setProperty('--row-h', rowH + 'px');
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  const items = getFilteredSounds();
+
+  // Update count
+  const countEl = document.getElementById('soundCount');
+  const soundItems = items.filter(i => !i._subHeader);
+  countEl.textContent = soundItems.length > 0 ? soundItems.length + '' : '';
+
+  // Calculate grid — use manual size if set, otherwise auto
+  const savedSize = tileSizes[getCatKey()];
+  if (savedSize) {
+    applyManualSize(savedSize);
+  } else {
+    calcGridSize(soundItems.length);
+  }
+  // Sync slider (50 = auto / leftmost)
+  document.getElementById('sizeSlider').value = savedSize || 50;
+
+  if (items.length === 0) {
+    grid.innerHTML = '<div class="empty">' + (connected ? 'No sounds found' : 'Connecting...') + '</div>';
+    gridBuilt = false;
+    return;
+  }
+
+  // Build a key list for the desired state
+  const desiredKeys = items.map(i => i._id || i.id);
+
+  // If grid hasn't been built yet or structure changed, do full rebuild
+  const existingKeys = Array.from(grid.children).map(el => el.dataset.id).filter(Boolean);
+  const structureMatch = gridBuilt && desiredKeys.length === existingKeys.length &&
+    desiredKeys.every((k, i) => k === existingKeys[i]);
+
+  if (!structureMatch) {
+    // Full rebuild — but use DocumentFragment to minimize reflow
+    const frag = document.createDocumentFragment();
+    items.forEach(item => {
+      if (item._subHeader) {
+        frag.appendChild(buildSubHeader(item));
+      } else {
+        frag.appendChild(buildSoundEl(item));
+      }
+    });
+    grid.innerHTML = '';
+    grid.appendChild(frag);
+    gridBuilt = true;
+  }
+
+  // Patch playing state (always, cheap operation)
+  grid.querySelectorAll('.sound').forEach(el => {
+    const id = el.dataset.id;
+    const shouldPlay = !!playingTimers[id];
+    el.classList.toggle('playing', shouldPlay);
+  });
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// =============================================
+// Events
+// =============================================
+document.getElementById('tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  const cat = tab.dataset.cat;
+  activeCategoryId = cat === '__all' ? null : cat;
+  gridBuilt = false; // force rebuild on category change
+  renderTabs();
+  renderGrid();
+  // Scroll to top
+  window.scrollTo({ top: 0, behavior: 'instant' });
+});
+
+document.getElementById('grid').addEventListener('click', e => {
+  // Don't play sounds if screensaver or cat picker is open, or just dismissed
+  if (screensaverActive || screensaverJustDismissed) return;
+  if (document.getElementById('catPicker').classList.contains('active')) return;
+  const soundEl = e.target.closest('.sound');
+  if (!soundEl) return;
+  const id = soundEl.dataset.id;
+  if (!id) return;
+  playSound(id, soundEl);
+});
+
+// Touch feedback
+document.getElementById('grid').addEventListener('touchstart', e => {
+  const soundEl = e.target.closest('.sound');
+  if (soundEl) soundEl.classList.add('tapped');
+}, { passive: true });
+document.getElementById('grid').addEventListener('touchend', e => {
+  const soundEl = e.target.closest('.sound');
+  if (soundEl) setTimeout(() => soundEl.classList.remove('tapped'), 120);
+}, { passive: true });
+
+document.getElementById('stopBtn').addEventListener('click', () => {
+  apiPost('/api/stop').catch(() => {});
+  // Clear all playing states
+  Object.keys(playingTimers).forEach(id => clearTimeout(playingTimers[id]));
+  playingTimers = {};
+  renderGrid();
+});
+
+let searchDebounce = null;
+document.getElementById('search').addEventListener('input', e => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    searchQuery = e.target.value.trim();
+    gridBuilt = false;
+    renderGrid();
+  }, 150);
+});
+
+// =============================================
+// Play sound
+// =============================================
+function playSound(id, el) {
+  // Calculate actual playback duration (accounting for trim)
+  const sound = allSounds.find(s => s.id === id);
+  let duration = 3;
+  if (sound) {
+    const start = sound.trimStart || 0;
+    const end = sound.trimEnd || sound.duration || 3;
+    duration = end - start;
+  }
+
+  // Clear existing timer for this sound
+  if (playingTimers[id]) clearTimeout(playingTimers[id]);
+
+  // Mark playing — clear after actual playback duration + small buffer
+  playingTimers[id] = setTimeout(() => {
+    delete playingTimers[id];
+    const soundEl = document.querySelector(`.sound[data-id="${id}"]`);
+    if (soundEl) soundEl.classList.remove('playing');
+  }, Math.min(duration * 1000 + 500, 30000));
+
+  // Immediate visual feedback
+  if (el) el.classList.add('playing');
+
+  apiPost('/api/play/' + encodeURIComponent(id)).catch(err => {
+    console.error('Play failed:', err);
+    // Remove playing state on error
+    delete playingTimers[id];
+    if (el) el.classList.remove('playing');
+  });
+}
+
+// =============================================
+// Auto-refresh polling
+// =============================================
+function startRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    loadData();
+  }, 5000);
+}
+
+// =============================================
+// Init
+// =============================================
+loadData().then(() => startRefresh());
+
+// Re-load on visibility change (tablet sleep/wake)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadData();
+});
+
+// Recalculate grid on resize/orientation change
+window.addEventListener('resize', () => renderGrid());
+
+// Size slider — per-category manual override
+const tileSizes = JSON.parse(localStorage.getItem('cb_tileSizes') || '{}');
+
+function getCatKey() {
+  return activeCategoryId === null ? '__all' : activeCategoryId;
+}
+
+function applySlider() {
+  const key = getCatKey();
+  const saved = tileSizes[key];
+  const slider = document.getElementById('sizeSlider');
+  if (saved) {
+    slider.value = saved;
+    applyManualSize(saved);
+  } else {
+    slider.value = 0;
+    // auto mode — calcGridSize handles it
+  }
+}
+
+function applyManualSize(size) {
+  const grid = document.getElementById('grid');
+  const availW = window.innerWidth - 8;
+  const cols = Math.max(1, Math.floor(availW / size));
+  grid.style.setProperty('--cols', cols);
+  grid.style.setProperty('--row-h', size + 'px');
+  grid.style.gridTemplateColumns = '';
+}
+
+document.getElementById('sizeSlider').addEventListener('input', (e) => {
+  const size = parseInt(e.target.value);
+  const key = getCatKey();
+  if (size <= 50) {
+    // All the way left = auto mode
+    delete tileSizes[key];
+    localStorage.setItem('cb_tileSizes', JSON.stringify(tileSizes));
+    // Recalculate auto
+    const items = getFilteredSounds().filter(i => !i._subHeader);
+    calcGridSize(items.length);
+  } else {
+    tileSizes[key] = size;
+    localStorage.setItem('cb_tileSizes', JSON.stringify(tileSizes));
+    applyManualSize(size);
+  }
+});
+
+// =============================================
+// Screensaver — activates after 1 min idle
+// =============================================
+let idleTimer = null;
+let screensaverActive = false;
+let screensaverJustDismissed = false;
+const IDLE_TIMEOUT = 60 * 1000;
+
+function showScreensaver() {
+  screensaverActive = true;
+  document.getElementById('screensaver').classList.add('active');
+  clearTimeout(idleTimer);
+}
+
+function dismissScreensaver() {
+  if (!screensaverActive) return;
+  screensaverActive = false;
+  screensaverJustDismissed = true;
+  document.getElementById('screensaver').classList.remove('active');
+  // Block sound plays for a brief moment after dismiss
+  setTimeout(() => { screensaverJustDismissed = false; }, 300);
+  startIdleTimer();
+}
+
+function startIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(showScreensaver, IDLE_TIMEOUT);
+}
+
+// Reset idle timer on real user interaction (but NOT when screensaver is showing)
+['touchstart', 'pointerdown', 'keydown'].forEach(evt => {
+  document.addEventListener(evt, (e) => {
+    if (screensaverActive) return; // don't reset timer while screensaver is up
+    startIdleTimer();
+  }, { passive: true });
+});
+
+// Tap screensaver to dismiss — stop propagation so grid doesn't get the tap
+document.getElementById('screensaver').addEventListener('click', (e) => {
+  e.stopPropagation();
+  dismissScreensaver();
+});
+document.getElementById('screensaver').addEventListener('touchstart', (e) => {
+  e.stopPropagation();
+  dismissScreensaver();
+});
+
+// Category picker
+document.getElementById('catBtn').addEventListener('click', () => {
+  const picker = document.getElementById('catPicker');
+  const items = 2 + categories.length; // All + Favs + categories
+  // Calculate grid cols to fill screen with near-square buttons
+  const availW = window.innerWidth;
+  const availH = window.innerHeight;
+  let bestCols = 2;
+  let bestScore = Infinity;
+  for (let c = 1; c <= Math.min(items, 6); c++) {
+    const r = Math.ceil(items / c);
+    const tw = availW / c;
+    const th = availH / r;
+    const ratio = tw > th ? tw / th : th / tw;
+    if (ratio < bestScore) { bestScore = ratio; bestCols = c; }
+  }
+  picker.style.setProperty('--cat-cols', bestCols);
+
+  let html = '';
+  html += `<button class="cat-pick-btn${activeCategoryId === null ? ' active' : ''}" data-cat="__all">All Sounds</button>`;
+  html += `<button class="cat-pick-btn${activeCategoryId === '__favs' ? ' active' : ''}" data-cat="__favs">\u2605 Favorites</button>`;
+  categories.sort((a, b) => a.order - b.order).forEach(cat => {
+    const count = allSounds.filter(s => s.categoryId === cat.id && !s.parentSoundId).length;
+    html += `<button class="cat-pick-btn${activeCategoryId === cat.id ? ' active' : ''}" data-cat="${cat.id}">${esc(cat.name)} (${count})</button>`;
+  });
+  picker.innerHTML = html;
+  picker.classList.add('active');
+});
+document.getElementById('catPicker').addEventListener('click', (e) => {
+  const btn = e.target.closest('.cat-pick-btn');
+  if (btn) {
+    const cat = btn.dataset.cat;
+    activeCategoryId = cat === '__all' ? null : cat;
+    gridBuilt = false;
+    renderTabs();
+    renderGrid();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  document.getElementById('catPicker').classList.remove('active');
+});
+
+// Device dropdowns
+let cachedDevices = null;
+let cachedSettings = null;
+
+async function loadDevices() {
+  try {
+    const [devData, settings] = await Promise.all([
+      apiFetch('/api/devices'),
+      apiFetch('/api/settings'),
+    ]);
+    cachedDevices = devData.devices || [];
+    cachedSettings = settings;
+    updateDevLabels();
+  } catch (e) {}
+}
+
+function updateDevLabels() {
+  if (!cachedDevices || !cachedSettings) return;
+  const outputs = cachedDevices.filter(d => d.kind === 'audiooutput');
+  const inputs = cachedDevices.filter(d => d.kind === 'audioinput');
+  const outDev = outputs.find(d => d.deviceId === cachedSettings.outputDeviceId);
+  const monDev = outputs.find(d => d.deviceId === cachedSettings.monitorDeviceId);
+  const micDev = inputs.find(d => d.deviceId === cachedSettings.micInputDeviceId);
+  document.getElementById('outLabel').textContent = shortLabel(outDev);
+  document.getElementById('monLabel').textContent = shortLabel(monDev);
+  document.getElementById('micLabel').textContent = shortLabel(micDev);
+}
+
+function shortLabel(dev) {
+  if (!dev) return '—';
+  // Shorten long labels
+  let l = dev.label || dev.deviceId;
+  if (l.length > 12) l = l.substring(0, 11) + '…';
+  return l;
+}
+
+function closeAllDropdowns() {
+  document.querySelectorAll('.dev-dropdown').forEach(d => d.classList.remove('open'));
+  document.getElementById('devOverlay').classList.remove('open');
+}
+
+function openDropdown(btnId, dropId, kind, settingKey) {
+  document.getElementById(btnId).addEventListener('click', async (e) => {
+    e.stopPropagation();
+    closeAllDropdowns();
+    if (!cachedDevices) await loadDevices();
+    const devices = cachedDevices.filter(d => d.kind === kind);
+    const selected = cachedSettings ? cachedSettings[settingKey] : null;
+    const drop = document.getElementById(dropId);
+    drop.innerHTML = devices.map(d =>
+      `<button class="dev-option${d.deviceId === selected ? ' selected' : ''}" data-id="${d.deviceId}">${d.label || d.deviceId}</button>`
+    ).join('');
+    drop.classList.add('open');
+    document.getElementById('devOverlay').classList.add('open');
+  });
+
+  document.getElementById(dropId).addEventListener('click', async (e) => {
+    const opt = e.target.closest('.dev-option');
+    if (!opt) return;
+    closeAllDropdowns();
+    try {
+      await fetch(location.origin + '/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [settingKey]: opt.dataset.id }),
+      });
+      if (cachedSettings) cachedSettings[settingKey] = opt.dataset.id;
+      updateDevLabels();
+    } catch (err) { console.error('Failed to save:', err); }
+  });
+}
+
+openDropdown('outBtn', 'outDrop', 'audiooutput', 'outputDeviceId');
+openDropdown('monBtn', 'monDrop', 'audiooutput', 'monitorDeviceId');
+openDropdown('micBtn', 'micDrop', 'audioinput', 'micInputDeviceId');
+
+document.getElementById('devOverlay').addEventListener('click', closeAllDropdowns);
+
+// Load devices on init
+loadDevices();
+
+// Manual hide button
+document.getElementById('hideBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  showScreensaver();
+});
+
+// Mic audio processing toggles
+function setupMicToggle(btnId, settingKey) {
+  const btn = document.getElementById(btnId);
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const current = cachedSettings[settingKey] || false;
+    const newVal = !current;
+    cachedSettings[settingKey] = newVal;
+    btn.style.background = newVal ? '#3b82f6' : '#333';
+    try {
+      await fetch(location.origin + '/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [settingKey]: newVal }),
+      });
+    } catch (err) { console.error('Toggle failed:', err); }
+  });
+  // Set initial state
+  if (cachedSettings[settingKey]) btn.style.background = '#3b82f6';
+}
+setupMicToggle('noiseSuppBtn', 'micNoiseSuppression');
+setupMicToggle('echoCancelBtn', 'micEchoCancellation');
+setupMicToggle('autoGainBtn', 'micAutoGainControl');
+
+// Start idle timer
+startIdleTimer();
+</script>
+</body>
+</html>

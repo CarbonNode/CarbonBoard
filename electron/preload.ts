@@ -78,6 +78,10 @@ const electronAPI = {
     return buffer;
   },
 
+  // Audio utilities
+  restartCable: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('audio:restartCable'),
+
   // Hotkeys
   registerHotkey: (hotkey: string, soundId: string): Promise<boolean> =>
     ipcRenderer.invoke('hotkey:register', hotkey, soundId),
@@ -120,6 +124,11 @@ const electronAPI = {
     const handler = () => callback();
     ipcRenderer.on('tray:show', handler);
     return () => ipcRenderer.removeListener('tray:show', handler);
+  },
+  onSettingsUpdated: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('settings:updated', handler);
+    return () => ipcRenderer.removeListener('settings:updated', handler);
   },
 
   // Utility to get file path from dropped File object

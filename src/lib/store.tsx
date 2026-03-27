@@ -93,6 +93,9 @@ const initialState: AppState = {
     micVolume: 1.0,
     micNoiseGate: 0,
     micNoiseGateAuto: true,
+    micNoiseSuppression: false,
+    micEchoCancellation: false,
+    micAutoGainControl: false,
     categoryViewModes: {},
   },
   audioDevices: [],
@@ -380,6 +383,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         micVolume: 1.0,
         micNoiseGate: 0,
         micNoiseGateAuto: true,
+        micNoiseSuppression: false,
+        micEchoCancellation: false,
+        micAutoGainControl: false,
         categoryViewModes: {},
       };
       const settings: Settings = { ...defaultSettings, ...loadedSettings };
@@ -497,8 +503,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+
+    // Periodic health check — verify output device is still valid every 30s
+    const healthCheck = setInterval(async () => {
+      const devices = await refreshAudioDevices();
+      const currentSettings = state.settings;
+      if (!currentSettings.outputDeviceId) return;
+
+      const deviceStillExists = devices.some(d => d.deviceId === currentSettings.outputDeviceId);
+      if (!deviceStillExists && currentSettings.lockOutputToCable) {
+        // Stored device ID is stale — re-find CABLE by name
+        const cableDevice = devices.find((d) =>
+          d.label.toLowerCase().includes('cable input') ||
+          d.label.toLowerCase().includes('vb-audio')
+        );
+        if (cableDevice) {
+          console.log('Output device ID stale, re-locking to VB-CABLE:', cableDevice.label);
+          if (window.electronAPI) {
+            const updated = await window.electronAPI.updateSettings({ outputDeviceId: cableDevice.deviceId });
+            dispatch({ type: 'SET_SETTINGS', payload: updated });
+          }
+        }
+      }
+    }, 30000);
+
     return () => {
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+      clearInterval(healthCheck);
     };
   }, []);
 
@@ -683,10 +714,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Set volume: master for output, monitorVolume for monitor
-      audio.volume = sound.volume * state.settings.masterVolume;
+      // Set volume: master for output, monitorVolume for monitor (clamp to 0-1)
+      audio.volume = Math.min(1, Math.max(0, sound.volume * state.settings.masterVolume));
       if (monitorAudio) {
-        monitorAudio.volume = sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume);
+        monitorAudio.volume = Math.min(1, Math.max(0, sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume)));
         monitorAudio.currentTime = sound.trimStart;
       }
 
@@ -765,8 +796,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       // If "default", "off", or not set, just plays to system default
 
-      // Set volume (preview goes to monitor only)
-      audio.volume = sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume);
+      // Set volume (preview goes to monitor only, clamp to 0-1)
+      audio.volume = Math.min(1, Math.max(0, sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume)));
       audio.currentTime = sound.trimStart;
 
       // Handle trim end
@@ -912,10 +943,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pauseResumeLastSound();
     });
 
+    const unsubscribeSettingsUpdated = window.electronAPI.onSettingsUpdated?.(async () => {
+      const settings = await window.electronAPI.getSettings();
+      dispatch({ type: 'SET_SETTINGS', payload: settings });
+      await refreshAudioDevices();
+    }) || (() => {});
+
     return () => {
       unsubscribeHotkey();
       unsubscribeStopAll();
       unsubscribePauseResume();
+      unsubscribeSettingsUpdated();
     };
   }, [state.sounds, playSound, stopAllSounds, pauseResumeLastSound]);
 
@@ -941,10 +979,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     state.playingSounds.forEach((playing) => {
       try {
         if (playing.audio && !playing.audio.paused) {
-          playing.audio.volume = playing.soundVolume * state.settings.masterVolume;
+          playing.audio.volume = Math.min(1, Math.max(0, playing.soundVolume * state.settings.masterVolume));
         }
         if (playing.monitorAudio && !playing.monitorAudio.paused) {
-          playing.monitorAudio.volume = playing.soundVolume * (state.settings.monitorVolume ?? state.settings.masterVolume);
+          playing.monitorAudio.volume = Math.min(1, Math.max(0, playing.soundVolume * (state.settings.monitorVolume ?? state.settings.masterVolume)));
         }
       } catch (e) {
         // Audio element may have been disposed
@@ -974,15 +1012,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // Get mic input with browser noise suppression enabled
+      // Get mic input with optional browser audio processing
       const constraints: MediaStreamConstraints = {
         audio: {
           deviceId: state.settings.micInputDeviceId
             ? { exact: state.settings.micInputDeviceId }
             : undefined,
-          noiseSuppression: true,
-          echoCancellation: true,
-          autoGainControl: true,
+          noiseSuppression: state.settings.micNoiseSuppression ?? false,
+          echoCancellation: state.settings.micEchoCancellation ?? false,
+          autoGainControl: state.settings.micAutoGainControl ?? false,
         },
       };
 
@@ -1090,13 +1128,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (micGateOpenRef.current) {
             // Gate is open - close if level drops below close threshold
             if (level < closeThreshold) {
-              micGateGainRef.current.gain.value = 0;
+              micGateGainRef.current.gain.linearRampToValueAtTime(0, audioContextRef.current!.currentTime + 0.01);
               micGateOpenRef.current = false;
             }
           } else {
             // Gate is closed - open if level rises above threshold
             if (level >= threshold) {
-              micGateGainRef.current.gain.value = 1;
+              micGateGainRef.current.gain.linearRampToValueAtTime(1, audioContextRef.current!.currentTime + 0.01);
               micGateOpenRef.current = true;
               // Clear noise floor samples when speaking starts
               if (micNoiseGateAutoRef.current) {

@@ -19,6 +19,8 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
+import * as os from 'os';
+import { exec } from 'child_process';
 import type { Category, SubCategory, Sound, Settings } from './types';
 
 // ============================================================
@@ -792,6 +794,21 @@ function setupIpcHandlers(): void {
     getSoundData(soundPath)
   );
 
+  // Restart VB-CABLE audio device (async to avoid freezing)
+  ipcMain.handle('audio:restartCable', () => {
+    return new Promise((resolve) => {
+      const cmd = `powershell -NoProfile -Command "Get-PnpDevice | Where-Object { $_.FriendlyName -like '*VB-Audio*' } | ForEach-Object { Disable-PnpDevice -InstanceId $_.InstanceId -Confirm:$false; Start-Sleep -Seconds 2; Enable-PnpDevice -InstanceId $_.InstanceId -Confirm:$false }"`;
+      exec(cmd, { timeout: 20000 }, (err) => {
+        if (err) {
+          console.error('Failed to restart VB-CABLE:', err.message);
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true });
+        }
+      });
+    });
+  });
+
   // Hotkeys
   ipcMain.handle('hotkey:register', (_, hotkey: string, soundId: string) =>
     registerHotkey(hotkey, soundId)
@@ -899,10 +916,22 @@ if (!gotTheLock) {
   // Local HTTP API (for BobbyBot / external control)
   // ============================================================
 
+  function getLanIp(): string {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+    return '127.0.0.1';
+  }
+
   function startApiServer() {
     const API_PORT = 9502;
 
-    const server = http.createServer((req, res) => {
+    const server = http.createServer(async (req, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -918,6 +947,14 @@ if (!gotTheLock) {
       const pathname = url.pathname;
 
       try {
+        // GET /api/info — connection info for remote UI
+        if (req.method === 'GET' && pathname === '/api/info') {
+          const ip = getLanIp();
+          res.writeHead(200);
+          res.end(JSON.stringify({ ip, port: API_PORT, url: `http://${ip}:${API_PORT}` }));
+          return;
+        }
+
         // GET /api/categories — list all categories with sub-categories
         if (req.method === 'GET' && pathname === '/api/categories') {
           const categories = getCategories();
@@ -958,8 +995,12 @@ if (!gotTheLock) {
             subCategoryId: s.subCategoryId,
             parentSoundId: s.parentSoundId,
             duration: s.duration,
+            trimStart: s.trimStart,
+            trimEnd: s.trimEnd,
             favorite: s.favorite,
             volume: s.volume,
+            order: s.order,
+            hasThumbnail: !!s.thumbnailPath,
           }));
 
           res.writeHead(200);
@@ -1014,6 +1055,105 @@ if (!gotTheLock) {
           return;
         }
 
+        // GET /api/settings — get current settings
+        if (req.method === 'GET' && pathname === '/api/settings') {
+          const settings = getSettings();
+          res.writeHead(200);
+          res.end(JSON.stringify(settings));
+          return;
+        }
+
+        // POST /api/settings — update settings
+        if (req.method === 'POST' && pathname === '/api/settings') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const updates = JSON.parse(body);
+              const updated = updateSettings(updates);
+              // Notify renderer to reload settings
+              mainWindow?.webContents.send('settings:updated');
+              res.writeHead(200);
+              res.end(JSON.stringify(updated));
+            } catch (err) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
+          return;
+        }
+
+        // GET /api/devices — get audio devices from renderer
+        if (req.method === 'GET' && pathname === '/api/devices') {
+          if (!mainWindow) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ error: 'App not ready' }));
+            return;
+          }
+          try {
+            const devices = await mainWindow.webContents.executeJavaScript(`
+              navigator.mediaDevices.enumerateDevices().then(devices =>
+                devices.filter(d => d.kind === 'audiooutput' || d.kind === 'audioinput')
+                  .map(d => ({ deviceId: d.deviceId, label: d.label, kind: d.kind }))
+              )
+            `);
+            res.writeHead(200);
+            res.end(JSON.stringify({ devices }));
+          } catch (err) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ error: (err as Error).message }));
+          }
+          return;
+        }
+
+        // GET /api/thumbnail/:id — serve thumbnail image for a sound
+        if (req.method === 'GET' && pathname.startsWith('/api/thumbnail/')) {
+          const soundId = decodeURIComponent(pathname.replace('/api/thumbnail/', ''));
+          const sound = getSound(soundId);
+          if (!sound || !sound.thumbnailPath) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'No thumbnail.' }));
+            return;
+          }
+          // Try the stored path directly first, then resolve relative to thumbnails dir
+          let thumbPath = sound.thumbnailPath;
+          if (!fs.existsSync(thumbPath)) {
+            // Try just the filename in the thumbnails directory
+            thumbPath = path.join(THUMBNAILS_PATH, path.basename(sound.thumbnailPath));
+          }
+          if (!fs.existsSync(thumbPath)) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Thumbnail file missing.', dbPath: sound.thumbnailPath, tried: thumbPath }));
+            return;
+          }
+          const ext = path.extname(thumbPath).toLowerCase();
+          const mimeTypes: Record<string, string> = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+          };
+          res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          res.writeHead(200);
+          res.end(fs.readFileSync(thumbPath));
+          return;
+        }
+
+        // GET / — serve web remote UI
+        if (req.method === 'GET' && (pathname === '/' || pathname === '/remote')) {
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          const webUiPath = isDev
+            ? path.join(__dirname, 'web-remote.html')
+            : path.join(process.resourcesPath, 'web-remote.html');
+          if (fs.existsSync(webUiPath)) {
+            res.writeHead(200);
+            res.end(fs.readFileSync(webUiPath, 'utf-8'));
+          } else {
+            res.writeHead(200);
+            res.end('<html><body><h1>CarbonBoard Remote</h1><p>web-remote.html not found</p></body></html>');
+          }
+          return;
+        }
+
         // 404
         res.writeHead(404);
         res.end(JSON.stringify({ error: 'Not found.' }));
@@ -1023,8 +1163,9 @@ if (!gotTheLock) {
       }
     });
 
-    server.listen(API_PORT, () => {
-      console.log(`CarbonBoard API listening on port ${API_PORT}`);
+    server.listen(API_PORT, '0.0.0.0', () => {
+      const ip = getLanIp();
+      console.log(`CarbonBoard Remote: http://${ip}:${API_PORT}`);
     });
 
     server.on('error', (err: NodeJS.ErrnoException) => {

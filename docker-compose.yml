@@ -1,0 +1,8 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-carbonboard
+    command: tunnel --no-autoupdate run --token eyJhIjoiMzEzOGJjYzc5ZWFiMzM0MTE1MzdjMzdlMjUxOTBjMjQiLCJ0IjoiNGQ0NTA3MTEtOTdhMy00MTRlLWFhY2QtYTk2YWIwMjA0MWUyIiwicyI6IllUVmpaVEpoWVdFdFpUUTNNQzAwWWpReUxXSXpOVFV0WkRrMllUaGhaakEwT0RCaSJ9
+    extra_hosts:
+      - "gaming-pc:192.168.0.239"
+    restart: unless-stopped

@@ -59,6 +59,9 @@ export interface Settings {
   micVolume: number;
   micNoiseGate: number; // 0 = off, 1-100 = threshold
   micNoiseGateAuto: boolean; // Auto-adjust threshold based on background noise
+  micNoiseSuppression: boolean; // Browser noise suppression (can cause boxy audio)
+  micEchoCancellation: boolean; // Browser echo cancellation (can cause phasing)
+  micAutoGainControl: boolean; // Browser auto gain control (can cause pumping)
   // View preferences per category (categoryId -> viewMode, 'all' for all sounds)
   categoryViewModes: Record<string, ViewMode>;
 }
@@ -158,6 +161,10 @@ export interface ElectronAPI {
   selectImageFile: () => Promise<string | null>;
   copyThumbnail: (sourcePath: string) => Promise<string>;
   getSoundData: (path: string) => Promise<ArrayBuffer>;
+
+  // Audio utilities
+  restartCable: () => Promise<{ success: boolean; error?: string }>;
+  onSettingsUpdated: (callback: () => void) => () => void;
 
   // Hotkeys
   registerHotkey: (hotkey: string, soundId: string) => Promise<boolean>;

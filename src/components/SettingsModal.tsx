@@ -357,6 +357,28 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               input in Discord/other apps.
             </p>
           </div>
+
+          {/* Restart VB-CABLE */}
+          <div className="bg-bg-tertiary rounded-lg p-3 flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-medium">Restart VB-CABLE</h4>
+              <p className="text-xs text-text-secondary">Disable and re-enable the virtual audio cable device</p>
+            </div>
+            <button
+              onClick={async () => {
+                if (!window.electronAPI) return;
+                const btn = document.getElementById('restart-cable-btn');
+                if (btn) btn.textContent = 'Restarting...';
+                const result = await window.electronAPI.restartCable();
+                if (btn) btn.textContent = result.success ? 'Done!' : 'Failed (need admin)';
+                setTimeout(() => { if (btn) btn.textContent = 'Restart'; }, 3000);
+              }}
+              id="restart-cable-btn"
+              className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors text-sm whitespace-nowrap"
+            >
+              Restart
+            </button>
+          </div>
         </div>
 
         <div className="p-4 border-t border-bg-tertiary flex justify-end gap-2">

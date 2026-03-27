@@ -1040,6 +1040,16 @@ loadDevices = async function() {
   updateMicToggleStates();
 };
 
+// Poll settings every 3s to sync with Electron app changes
+setInterval(async () => {
+  try {
+    const r = await fetch(location.origin + '/api/settings');
+    const settings = await r.json();
+    cachedSettings = settings;
+    updateMicToggleStates();
+  } catch {}
+}, 3000);
+
 // Start idle timer
 startIdleTimer();
 </script>

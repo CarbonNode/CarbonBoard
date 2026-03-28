@@ -1106,6 +1106,69 @@ if (!gotTheLock) {
           return;
         }
 
+        // Discord RPC Voice Mixer
+        if (req.method === 'GET' && pathname === '/api/discord/connect') {
+          const { connectDiscordRPC, isConnected } = await import('./discord-rpc');
+          if (isConnected()) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ success: true, message: 'Already connected' }));
+          } else {
+            const ok = await connectDiscordRPC();
+            res.writeHead(ok ? 200 : 500);
+            res.end(JSON.stringify({ success: ok, message: ok ? 'Connected' : 'Failed to connect — is Discord running?' }));
+          }
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/discord/voice') {
+          const { getVoiceChannel, isConnected } = await import('./discord-rpc');
+          if (!isConnected()) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ connected: false, channel: null }));
+            return;
+          }
+          const channel = await getVoiceChannel();
+          res.writeHead(200);
+          res.end(JSON.stringify({ connected: true, channel }));
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/discord/volume') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', async () => {
+            try {
+              const { userId, volume } = JSON.parse(body);
+              const { setUserVolume } = await import('./discord-rpc');
+              const ok = await setUserVolume(userId, volume);
+              res.writeHead(ok ? 200 : 500);
+              res.end(JSON.stringify({ success: ok }));
+            } catch (err) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/discord/mute') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', async () => {
+            try {
+              const { userId, mute } = JSON.parse(body);
+              const { setUserMute } = await import('./discord-rpc');
+              const ok = await setUserMute(userId, mute);
+              res.writeHead(ok ? 200 : 500);
+              res.end(JSON.stringify({ success: ok }));
+            } catch (err) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
+          return;
+        }
+
         // GET /api/thumbnail/:id — serve thumbnail image for a sound
         if (req.method === 'GET' && pathname.startsWith('/api/thumbnail/')) {
           const soundId = decodeURIComponent(pathname.replace('/api/thumbnail/', ''));

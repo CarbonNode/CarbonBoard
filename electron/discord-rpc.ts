@@ -44,8 +44,8 @@ export async function connectDiscordRPC(): Promise<boolean> {
 
     await rpcClient.login({
       scopes: ["rpc", "rpc.voice.read", "rpc.voice.write"],
-      redirectUri: "http://localhost",
-    });
+      redirect_uri: "http://localhost",
+    } as any);
 
     authenticated = true;
     console.log("Discord RPC authenticated");
@@ -62,7 +62,7 @@ export async function getVoiceChannel(): Promise<VoiceChannel | null> {
   if (!rpcClient || !authenticated) return null;
 
   try {
-    const channel = await rpcClient.request("GET_SELECTED_VOICE_CHANNEL", {});
+    const channel: any = await rpcClient.request("GET_SELECTED_VOICE_CHANNEL", {});
     if (!channel || !channel.id) return null;
 
     const users: VoiceUser[] = (channel.voice_states || []).map((vs: any) => {

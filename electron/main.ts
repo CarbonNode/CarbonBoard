@@ -1109,14 +1109,17 @@ if (!gotTheLock) {
         // Discord RPC Voice Mixer
         if (req.method === 'GET' && pathname === '/api/discord/connect') {
           try {
-            const { connectDiscordRPC, isConnected } = await import('./discord-rpc');
+            const { connectDiscordRPC, isConnected, lastError } = await import('./discord-rpc');
             if (isConnected()) {
               res.writeHead(200);
               res.end(JSON.stringify({ success: true, message: 'Already connected' }));
             } else {
               const ok = await connectDiscordRPC();
               res.writeHead(200);
-              res.end(JSON.stringify({ success: ok, message: ok ? 'Connected' : 'Failed to connect — is Discord running?' }));
+              res.end(JSON.stringify({
+                success: ok,
+                message: ok ? 'Connected' : `Failed: ${lastError || 'Discord not found'}. Make sure Discord desktop app is open and fully loaded.`
+              }));
             }
           } catch (err) {
             console.error('Discord RPC error:', err);

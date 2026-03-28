@@ -31,31 +31,46 @@ export interface VoiceChannel {
   users: VoiceUser[];
 }
 
+export let lastError = "";
+
 export async function connectDiscordRPC(): Promise<boolean> {
   if (connected && authenticated) return true;
 
-  try {
-    rpcClient = new Client({ clientId: CLIENT_ID });
+  // Retry up to 3 times with 1s delay
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      // Clean up previous client
+      if (rpcClient) {
+        try { rpcClient.destroy(); } catch {}
+        rpcClient = null;
+      }
 
-    rpcClient.on("ready", () => {
-      console.log("Discord RPC connected as", rpcClient?.user?.username);
-      connected = true;
-    });
+      rpcClient = new Client({ clientId: CLIENT_ID });
 
-    await rpcClient.login({
-      scopes: ["rpc", "rpc.voice.read", "rpc.voice.write"],
-      redirect_uri: "http://localhost",
-    } as any);
+      rpcClient.on("ready", () => {
+        console.log("Discord RPC connected as", rpcClient?.user?.username);
+        connected = true;
+      });
 
-    authenticated = true;
-    console.log("Discord RPC authenticated");
-    return true;
-  } catch (err: any) {
-    console.error("Discord RPC connection failed:", err.message);
-    connected = false;
-    authenticated = false;
-    return false;
+      console.log(`Discord RPC login attempt ${attempt}/3...`);
+      await rpcClient.login({
+        scopes: ["rpc", "rpc.voice.read", "rpc.voice.write"],
+        redirect_uri: "http://localhost",
+      } as any);
+
+      authenticated = true;
+      lastError = "";
+      console.log("Discord RPC authenticated");
+      return true;
+    } catch (err: any) {
+      lastError = err.message || "Unknown error";
+      console.error(`Discord RPC attempt ${attempt} failed:`, lastError);
+      connected = false;
+      authenticated = false;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
+    }
   }
+  return false;
 }
 
 export async function getVoiceChannel(): Promise<VoiceChannel | null> {

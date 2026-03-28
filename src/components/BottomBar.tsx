@@ -84,7 +84,7 @@ export function BottomBar() {
     <>
       <div className="bg-bg-secondary border-t border-bg-tertiary flex-shrink-0">
         {/* Main controls - scrollable on small screens */}
-        <div className="h-14 flex items-center gap-4 px-4 overflow-x-auto">
+        <div className="h-14 flex items-center gap-2 px-3 overflow-x-auto">
           {/* Output device selector (for Discord) */}
           <div className="flex items-center gap-1 flex-shrink-0">
             <div className="flex items-center gap-1">

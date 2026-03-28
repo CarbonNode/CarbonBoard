@@ -6,6 +6,7 @@
 import { Client } from "@xhayper/discord-rpc";
 
 const CLIENT_ID = "1462539019345858792";
+const CLIENT_SECRET = "3FvEGLeU4uz7HbGQrXzIMQzFbSiEYK4Z";
 
 let rpcClient: Client | null = null;
 let connected = false;
@@ -45,7 +46,7 @@ export async function connectDiscordRPC(): Promise<boolean> {
         rpcClient = null;
       }
 
-      rpcClient = new Client({ clientId: CLIENT_ID });
+      rpcClient = new Client({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
 
       rpcClient.on("ready", () => {
         console.log("Discord RPC connected as", rpcClient?.user?.username);
@@ -54,9 +55,9 @@ export async function connectDiscordRPC(): Promise<boolean> {
 
       console.log(`Discord RPC login attempt ${attempt}/3...`);
       await rpcClient.login({
-        scopes: ["rpc", "rpc.voice.read", "rpc.voice.write"],
-        redirect_uri: "http://localhost",
-      } as any);
+        scopes: ["rpc", "identify"],
+        redirectUri: "http://localhost",
+      });
 
       authenticated = true;
       lastError = "";

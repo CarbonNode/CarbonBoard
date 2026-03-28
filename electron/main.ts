@@ -1169,6 +1169,54 @@ if (!gotTheLock) {
           return;
         }
 
+        // Standalone mixer page (for popup window)
+        if (req.method === 'GET' && pathname === '/api/discord/mixer') {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Voice Mixer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#111;color:#eee;font-family:-apple-system,'Segoe UI',sans-serif;padding:12px}
+.header{font-size:14px;font-weight:700;padding:8px 0;display:flex;align-items:center;gap:8px;border-bottom:1px solid #333;margin-bottom:12px}
+.header svg{width:18px;height:18px}
+.user{display:flex;align-items:center;gap:10px;padding:10px;background:#1a1a2e;border-radius:8px;margin-bottom:8px}
+.avatar{width:36px;height:36px;border-radius:50%;border:2px solid #5865F2;object-fit:cover;flex-shrink:0}
+.avatar.muted{border-color:#ed4245;opacity:0.5}
+.info{flex:1;min-width:0}.name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.controls{display:flex;align-items:center;gap:6px;margin-top:4px}
+input[type=range]{flex:1;height:4px;-webkit-appearance:none;background:#333;border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:#5865F2;border-radius:50%;cursor:pointer}
+.vol{color:#999;font-size:10px;min-width:28px;text-align:right}
+.mute{background:none;border:1px solid #444;color:#999;border-radius:3px;padding:2px 6px;font-size:9px;cursor:pointer}
+.mute.active{background:#ed4245;border-color:#ed4245;color:#fff}
+.status{color:#666;font-size:11px;text-align:center;margin-top:8px}
+.btn{background:#5865F2;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-size:13px;cursor:pointer;display:block;margin:20px auto}
+</style></head><body>
+<div class="header"><svg fill="#5865F2" viewBox="0 0 24 24"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 00-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 00-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.03.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.02.03.05.03.07.02 1.72-.53 3.45-1.33 5.24-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02z"/></svg>Voice Mixer</div>
+<div id="body"><button class="btn" onclick="connect()">Connect to Discord</button></div>
+<div class="status" id="status"></div>
+<script>
+const BASE = location.origin;
+async function connect(){
+  document.getElementById('body').innerHTML='<div style="color:#999;text-align:center">Connecting...</div>';
+  const r=await fetch(BASE+'/api/discord/connect');const d=await r.json();
+  if(d.success){refresh();}else{document.getElementById('body').innerHTML='<button class="btn" onclick="connect()">Retry</button>';document.getElementById('status').textContent=d.message||'Failed';}
+}
+async function refresh(){
+  const r=await fetch(BASE+'/api/discord/voice');const d=await r.json();
+  if(!d.connected){document.getElementById('body').innerHTML='<button class="btn" onclick="connect()">Connect</button>';return;}
+  if(!d.channel){document.getElementById('body').innerHTML='<div style="color:#999;text-align:center;padding:20px">Join a voice channel</div>';return;}
+  const ch=d.channel;document.getElementById('status').textContent=ch.name+' — '+ch.users.length+' user'+(ch.users.length!==1?'s':'');
+  document.getElementById('body').innerHTML=ch.users.map(u=>{
+    const mc=u.mute||u.selfMute?' muted':'';const ma=u.mute?' active':'';
+    return '<div class="user"><img class="avatar'+mc+'" src="'+u.avatarUrl+'" onerror="this.src=\\'https://cdn.discordapp.com/embed/avatars/0.png\\'"><div class="info"><div class="name">'+u.username+'</div><div class="controls"><input type="range" min="0" max="200" value="'+u.volume+'" oninput="sv(\\''+u.id+'\\',this.value)"><span class="vol" id="v_'+u.id+'">'+u.volume+'%</span><button class="mute'+ma+'" onclick="tm(\\''+u.id+'\\','+ !u.mute+')">'+(u.mute?'X':'M')+'</button></div></div></div>';
+  }).join('');
+}
+async function sv(id,v){document.getElementById('v_'+id).textContent=v+'%';fetch(BASE+'/api/discord/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:id,volume:parseInt(v)})});}
+async function tm(id,m){await fetch(BASE+'/api/discord/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:id,mute:m})});refresh();}
+setInterval(()=>refresh(),3000);
+</script></body></html>`);
+          return;
+        }
+
         // GET /api/thumbnail/:id — serve thumbnail image for a sound
         if (req.method === 'GET' && pathname.startsWith('/api/thumbnail/')) {
           const soundId = decodeURIComponent(pathname.replace('/api/thumbnail/', ''));

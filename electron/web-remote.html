@@ -351,37 +351,42 @@
     <div class="loading">Connecting...</div>
   </div>
 
-  <!-- Discord Voice Mixer Overlay -->
-  <div id="mixerOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:9999;flex-direction:column;align-items:center;justify-content:center;">
+  <!-- Discord Voice Mixer Sidebar -->
+  <div id="mixerSidebar">
     <style>
-      .mixer-header { color:#fff; font-size:18px; font-weight:700; margin-bottom:24px; display:flex; align-items:center; gap:10px; }
-      .mixer-header svg { width:24px; height:24px; }
-      .mixer-grid { display:flex; gap:32px; flex-wrap:wrap; justify-content:center; align-items:flex-end; max-width:90vw; }
-      .mixer-user { display:flex; flex-direction:column; align-items:center; gap:8px; width:80px; }
-      .mixer-avatar { width:56px; height:56px; border-radius:50%; border:3px solid #5865F2; object-fit:cover; }
-      .mixer-avatar.muted { border-color:#ed4245; opacity:0.5; }
-      .mixer-name { color:#fff; font-size:11px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:80px; }
-      .mixer-slider-wrap { position:relative; width:40px; height:180px; display:flex; align-items:center; justify-content:center; }
-      .mixer-slider { -webkit-appearance:none; appearance:none; width:180px; height:6px; background:#333; border-radius:3px; transform:rotate(-90deg); transform-origin:center; }
-      .mixer-slider::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px; background:#5865F2; border-radius:50%; cursor:pointer; }
-      .mixer-vol { color:#999; font-size:12px; font-weight:600; }
-      .mixer-mute { background:none; border:1px solid #555; color:#999; border-radius:4px; padding:4px 8px; font-size:10px; cursor:pointer; margin-top:4px; }
-      .mixer-mute.active { background:#ed4245; border-color:#ed4245; color:#fff; }
-      .mixer-close { position:absolute; top:20px; right:24px; background:none; border:none; color:#999; font-size:28px; cursor:pointer; }
+      #mixerSidebar {
+        position:fixed; top:0; right:-280px; width:280px; height:100%; background:#111; border-left:2px solid #5865F2;
+        z-index:9999; transition:right 0.3s ease; display:flex; flex-direction:column; overflow-y:auto;
+      }
+      #mixerSidebar.open { right:0; }
+      body.mixer-open .grid { margin-right:280px; }
+      .mixer-header { color:#fff; font-size:14px; font-weight:700; padding:12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #333; }
+      .mixer-header svg { width:18px; height:18px; flex-shrink:0; }
+      .mixer-close { background:none; border:none; color:#999; font-size:20px; cursor:pointer; margin-left:auto; padding:0 4px; }
       .mixer-close:hover { color:#fff; }
-      .mixer-status { color:#999; font-size:13px; margin-top:16px; }
-      .mixer-connect { background:#5865F2; color:#fff; border:none; padding:12px 32px; border-radius:8px; font-size:16px; cursor:pointer; font-weight:600; }
+      .mixer-users { flex:1; padding:8px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+      .mixer-user { display:flex; align-items:center; gap:10px; padding:8px; background:#1a1a2e; border-radius:8px; }
+      .mixer-avatar { width:36px; height:36px; border-radius:50%; border:2px solid #5865F2; object-fit:cover; flex-shrink:0; }
+      .mixer-avatar.muted { border-color:#ed4245; opacity:0.5; }
+      .mixer-info { flex:1; min-width:0; }
+      .mixer-name { color:#fff; font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .mixer-controls { display:flex; align-items:center; gap:6px; margin-top:4px; }
+      .mixer-slider { -webkit-appearance:none; appearance:none; width:100%; height:4px; background:#333; border-radius:2px; flex:1; }
+      .mixer-slider::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; background:#5865F2; border-radius:50%; cursor:pointer; }
+      .mixer-vol { color:#999; font-size:10px; font-weight:600; min-width:28px; text-align:right; }
+      .mixer-mute { background:none; border:1px solid #444; color:#999; border-radius:3px; padding:2px 6px; font-size:9px; cursor:pointer; }
+      .mixer-mute.active { background:#ed4245; border-color:#ed4245; color:#fff; }
+      .mixer-status { color:#666; font-size:11px; padding:8px 12px; border-top:1px solid #333; text-align:center; }
+      .mixer-connect { background:#5865F2; color:#fff; border:none; padding:10px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600; margin:20px auto; display:block; }
       .mixer-connect:hover { background:#4752c4; }
     </style>
-    <button class="mixer-close" id="mixerClose">&times;</button>
-    <div id="mixerContent" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">
-      <div class="mixer-header">
-        <svg fill="#5865F2" viewBox="0 0 24 24"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 00-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 00-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.03.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.02.03.05.03.07.02 1.72-.53 3.45-1.33 5.24-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02z"/></svg>
-        Voice Mixer
-      </div>
-      <div id="mixerBody"></div>
-      <div class="mixer-status" id="mixerStatus"></div>
+    <div class="mixer-header">
+      <svg fill="#5865F2" viewBox="0 0 24 24"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 00-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 00-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.03.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.02.03.05.03.07.02 1.72-.53 3.45-1.33 5.24-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02z"/></svg>
+      Voice Mixer
+      <button class="mixer-close" id="mixerClose">&times;</button>
     </div>
+    <div class="mixer-users" id="mixerBody"></div>
+    <div class="mixer-status" id="mixerStatus"></div>
   </div>
 
 <script>
@@ -1090,17 +1095,27 @@ let mixerPollInterval = null;
 
 document.getElementById('mixerBtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  document.getElementById('mixerOverlay').style.display = 'flex';
-  if (!mixerConnected) {
-    showMixerConnect();
+  const sidebar = document.getElementById('mixerSidebar');
+  const isOpen = sidebar.classList.contains('open');
+  if (isOpen) {
+    sidebar.classList.remove('open');
+    document.body.classList.remove('mixer-open');
+    stopMixerPoll();
   } else {
-    refreshMixer();
+    sidebar.classList.add('open');
+    document.body.classList.add('mixer-open');
+    if (!mixerConnected) {
+      showMixerConnect();
+    } else {
+      refreshMixer();
+    }
+    startMixerPoll();
   }
-  startMixerPoll();
 });
 
 document.getElementById('mixerClose').addEventListener('click', () => {
-  document.getElementById('mixerOverlay').style.display = 'none';
+  document.getElementById('mixerSidebar').classList.remove('open');
+  document.body.classList.remove('mixer-open');
   stopMixerPoll();
 });
 
@@ -1151,20 +1166,24 @@ function renderMixer(channel) {
   const users = channel.users || [];
   document.getElementById('mixerStatus').textContent = channel.name + ' — ' + users.length + ' user' + (users.length !== 1 ? 's' : '');
 
-  document.getElementById('mixerBody').innerHTML = '<div class="mixer-grid">' + users.map(u => {
+  document.getElementById('mixerBody').innerHTML = users.map(u => {
     const muteClass = u.mute || u.selfMute ? ' muted' : '';
     const muteActive = u.mute ? ' active' : '';
     return '<div class="mixer-user">' +
       '<img class="mixer-avatar' + muteClass + '" src="' + u.avatarUrl + '" onerror="this.src=\'https://cdn.discordapp.com/embed/avatars/0.png\'">' +
-      '<div class="mixer-name">' + u.username + '</div>' +
-      '<div class="mixer-slider-wrap"><input type="range" class="mixer-slider" min="0" max="200" value="' + u.volume + '" oninput="setMixerVol(\'' + u.id + '\',this.value,this)"></div>' +
-      '<div class="mixer-vol" id="vol_' + u.id + '">' + u.volume + '%</div>' +
-      '<button class="mixer-mute' + muteActive + '" onclick="toggleMixerMute(\'' + u.id + '\',' + !u.mute + ')">' + (u.mute ? 'MUTED' : 'MUTE') + '</button>' +
+      '<div class="mixer-info">' +
+        '<div class="mixer-name">' + u.username + '</div>' +
+        '<div class="mixer-controls">' +
+          '<input type="range" class="mixer-slider" min="0" max="200" value="' + u.volume + '" oninput="setMixerVol(\'' + u.id + '\',this.value)">' +
+          '<span class="mixer-vol" id="vol_' + u.id + '">' + u.volume + '%</span>' +
+          '<button class="mixer-mute' + muteActive + '" onclick="toggleMixerMute(\'' + u.id + '\',' + !u.mute + ')">' + (u.mute ? 'X' : 'M') + '</button>' +
+        '</div>' +
+      '</div>' +
       '</div>';
-  }).join('') + '</div>';
+  }).join('');
 }
 
-async function setMixerVol(userId, volume, slider) {
+async function setMixerVol(userId, volume) {
   document.getElementById('vol_' + userId).textContent = volume + '%';
   try {
     await fetch(location.origin + '/api/discord/volume', {

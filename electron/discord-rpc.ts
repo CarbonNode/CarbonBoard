@@ -57,7 +57,7 @@ export async function connectDiscordRPC(): Promise<boolean> {
       await rpcClient.login({
         scopes: ["rpc", "identify"],
         redirectUri: "http://localhost",
-      });
+      } as any);
 
       authenticated = true;
       lastError = "";

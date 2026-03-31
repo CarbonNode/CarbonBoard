@@ -167,7 +167,8 @@ function appReducer(state: AppState, action: Action): AppState {
     case 'DELETE_SOUND':
       return {
         ...state,
-        sounds: state.sounds.filter((s) => s.id !== action.payload),
+        // Also remove sub-sounds whose parent is being deleted
+        sounds: state.sounds.filter((s) => s.id !== action.payload && s.parentSoundId !== action.payload),
       };
     case 'SET_SETTINGS':
       return { ...state, settings: action.payload };
@@ -394,6 +395,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'SET_SUB_CATEGORIES', payload: subCategories });
       dispatch({ type: 'SET_SOUNDS', payload: sounds });
       dispatch({ type: 'SET_SETTINGS', payload: settings });
+
+      // Auto-expand parents that have sub-sounds so they're visible on load
+      const parentIds = new Set(sounds.filter(s => s.parentSoundId).map(s => s.parentSoundId!));
+      parentIds.forEach(id => dispatch({ type: 'EXPAND_SOUND', payload: id }));
 
       // Register stop all hotkey
       if (settings.stopAllHotkey) {
@@ -907,21 +912,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const createSubSoundbite = useCallback(async (parentSound: Sound, subTrimStart: number, subTrimEnd: number, subName: string) => {
     if (!window.electronAPI) return;
-    const newSound = await window.electronAPI.createSound({
-      name: subName,
-      filePath: parentSound.filePath,
-      storedPath: parentSound.storedPath,
-      categoryId: parentSound.categoryId,
-      subCategoryId: parentSound.subCategoryId,
-      parentSoundId: parentSound.id,
-      thumbnailPath: parentSound.thumbnailPath,
-      volume: parentSound.volume,
-      trimStart: subTrimStart,
-      trimEnd: subTrimEnd,
-      duration: parentSound.duration,
-    });
-    dispatch({ type: 'ADD_SOUND', payload: newSound });
-    dispatch({ type: 'EXPAND_SOUND', payload: parentSound.id });
+    try {
+      const newSound = await window.electronAPI.createSound({
+        name: subName,
+        filePath: parentSound.filePath,
+        storedPath: parentSound.storedPath,
+        categoryId: parentSound.categoryId,
+        subCategoryId: parentSound.subCategoryId,
+        parentSoundId: parentSound.id,
+        thumbnailPath: parentSound.thumbnailPath,
+        volume: parentSound.volume,
+        trimStart: subTrimStart,
+        trimEnd: subTrimEnd,
+        duration: parentSound.duration,
+      });
+      dispatch({ type: 'ADD_SOUND', payload: newSound });
+      dispatch({ type: 'EXPAND_SOUND', payload: parentSound.id });
+    } catch (error) {
+      console.error('Failed to create sub-soundbite:', error);
+    }
   }, []);
 
   // Listen for hotkey events from main process

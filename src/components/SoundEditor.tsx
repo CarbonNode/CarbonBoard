@@ -43,14 +43,16 @@ export function SoundEditor() {
       return;
     }
 
+    let audioContext: AudioContext | null = null;
     try {
-      console.log('Loading audio from:', sound.storedPath);
       const data = await window.electronAPI.getSoundData(sound.storedPath);
-      console.log('Got audio data, size:', data?.byteLength || 'unknown');
+      if (!data || data.byteLength === 0) {
+        console.error('No audio data returned for:', sound.storedPath);
+        return;
+      }
 
-      const audioContext = new AudioContext();
+      audioContext = new AudioContext();
       const buffer = await audioContext.decodeAudioData(data);
-      console.log('Decoded audio, duration:', buffer.duration);
 
       setAudioBuffer(buffer);
       setDuration(buffer.duration);
@@ -64,10 +66,12 @@ export function SoundEditor() {
       if (sound.trimEnd === null) {
         setTrimEnd(buffer.duration);
       }
-
-      audioContext.close();
     } catch (error) {
       console.error('Failed to load audio buffer:', error);
+    } finally {
+      if (audioContext) {
+        try { audioContext.close(); } catch {}
+      }
     }
   };
 

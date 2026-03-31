@@ -174,10 +174,11 @@
     position: absolute; top: 1px; left: 2px;
     background: rgba(0,0,0,0.7);
     color: #aaa;
+    cursor: pointer;
+    pointer-events: auto;
     font-size: 8px;
     padding: 0 3px;
     border-radius: 2px;
-    pointer-events: none;
   }
 
   /* Sub-category headers */
@@ -404,6 +405,7 @@ let refreshTimer = null;
 let lastSoundsJson = '';
 let lastCatsJson = '';
 let gridBuilt = false; // track if we need full rebuild vs patch
+let expandedParents = new Set(); // parent sound IDs whose sub-sounds are visible
 
 // =============================================
 // API
@@ -497,6 +499,18 @@ function getFilteredSounds() {
 
   filtered.sort((a, b) => (a.order || 0) - (b.order || 0));
 
+  // Insert sub-sounds after their expanded parent
+  const withSubs = [];
+  filtered.forEach(s => {
+    withSubs.push(s);
+    if (expandedParents.has(s.id)) {
+      const subs = allSounds.filter(x => x.parentSoundId === s.id);
+      subs.sort((a, b) => (a.order || 0) - (b.order || 0));
+      subs.forEach(sub => withSubs.push({ ...sub, _isSub: true }));
+    }
+  });
+  filtered = withSubs;
+
   // Group by sub-category if viewing a specific category
   if (activeCategoryId && activeCategoryId !== '__favs') {
     const noSub = filtered.filter(s => !s.subCategoryId);
@@ -572,8 +586,16 @@ function buildSoundEl(s) {
   if (subCount > 0) {
     const badge = document.createElement('span');
     badge.className = 'sub-badge';
-    badge.textContent = '+' + subCount;
+    badge.textContent = expandedParents.has(s.id) ? '\u25BC' + subCount : '+' + subCount;
+    badge.dataset.parentId = s.id;
+    badge.dataset.action = 'toggle-subs';
     el.appendChild(badge);
+  }
+
+  // Visual indicator for sub-sounds
+  if (s._isSub) {
+    el.style.outline = '2px solid rgba(233,69,96,0.4)';
+    el.style.outlineOffset = '-2px';
   }
 
   return el;
@@ -723,6 +745,19 @@ document.getElementById('grid').addEventListener('click', e => {
   // Don't play sounds if screensaver or cat picker is open, or just dismissed
   if (screensaverActive || screensaverJustDismissed) return;
   if (document.getElementById('catPicker').classList.contains('active')) return;
+
+  // Toggle sub-sound expansion
+  const badge = e.target.closest('[data-action="toggle-subs"]');
+  if (badge) {
+    e.stopPropagation();
+    const parentId = badge.dataset.parentId;
+    if (expandedParents.has(parentId)) expandedParents.delete(parentId);
+    else expandedParents.add(parentId);
+    gridBuilt = false;
+    renderGrid();
+    return;
+  }
+
   const soundEl = e.target.closest('.sound');
   if (!soundEl) return;
   const id = soundEl.dataset.id;

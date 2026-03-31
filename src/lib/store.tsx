@@ -1038,6 +1038,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.log('Requesting mic with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       micStreamRef.current = stream;
+
+      // Monitor track state - auto-restart if mic stream dies
+      stream.getAudioTracks().forEach(track => {
+        track.addEventListener('ended', () => {
+          console.warn('Mic track ended unexpectedly, restarting passthrough');
+          stopMicPassthrough();
+          setTimeout(() => startMicPassthrough(), 500);
+        });
+      });
+
       console.log('Got mic stream with noise suppression');
 
       // Resume audio context if suspended
@@ -1093,6 +1103,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const updateLevel = () => {
         if (!micAnalyserRef.current) return;
+
+        // Health check: resume AudioContext if suspended (Chromium can suspend it)
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          console.warn('AudioContext suspended, resuming...');
+          audioContextRef.current.resume();
+        }
+
+        // Health check: restart audio element if it stopped playing
+        if (micOutputAudioRef.current && micOutputAudioRef.current.paused && micStreamRef.current) {
+          console.warn('Mic audio element paused, restarting...');
+          micOutputAudioRef.current.play().catch(() => {});
+        }
+
+        // Health check: verify mic tracks are still alive
+        if (micStreamRef.current) {
+          const tracks = micStreamRef.current.getAudioTracks();
+          if (tracks.length === 0 || tracks.every(t => t.readyState === 'ended')) {
+            console.warn('Mic tracks ended, restarting passthrough...');
+            stopMicPassthrough();
+            setTimeout(() => startMicPassthrough(), 500);
+            return;
+          }
+        }
 
         micAnalyserRef.current.getByteFrequencyData(dataArray);
         // Calculate RMS level
@@ -1178,7 +1211,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      await audio.play();
+      try {
+        await audio.play();
+      } catch (e) {
+        console.error('Failed to play mic audio, retrying:', e);
+        // Retry once after a short delay
+        await new Promise(r => setTimeout(r, 200));
+        await audio.play();
+      }
       console.log('Mic audio playing');
 
       // Note: Silero VAD disabled - doesn't work in packaged Electron apps due to ASAR/WASM issues

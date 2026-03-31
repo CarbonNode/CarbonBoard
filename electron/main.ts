@@ -390,11 +390,9 @@ function updateSound(id: string, updates: Partial<Sound>): Sound {
 function deleteSound(id: string): void {
   const sound = getSound(id);
   if (sound) {
-    // Delete sub-soundbites first
-    const subSounds = getSubSounds(id);
-    for (const sub of subSounds) {
-      deleteSound(sub.id);
-    }
+    // Promote sub-soundbites to standalone sounds instead of deleting them
+    db.prepare('UPDATE sounds SET parentSoundId = NULL WHERE parentSoundId = ?').run(id);
+
     // Delete stored file (only if no other sounds reference it)
     if (sound.storedPath && fs.existsSync(sound.storedPath)) {
       const otherRefs = db.prepare('SELECT COUNT(*) as count FROM sounds WHERE storedPath = ? AND id != ?').get(sound.storedPath, id) as { count: number };

@@ -167,8 +167,10 @@ function appReducer(state: AppState, action: Action): AppState {
     case 'DELETE_SOUND':
       return {
         ...state,
-        // Also remove sub-sounds whose parent is being deleted
-        sounds: state.sounds.filter((s) => s.id !== action.payload && s.parentSoundId !== action.payload),
+        // Remove the sound, promote its sub-sounds to standalone
+        sounds: state.sounds
+          .filter((s) => s.id !== action.payload)
+          .map((s) => s.parentSoundId === action.payload ? { ...s, parentSoundId: null } : s),
       };
     case 'SET_SETTINGS':
       return { ...state, settings: action.payload };

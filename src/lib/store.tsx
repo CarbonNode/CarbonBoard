@@ -306,9 +306,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const previewAudioRef = useRef<HTMLAudioElement | null>(null); // Track current preview audio
   // VAD disabled - using volume-based detection instead
 
+  // Self-healing refs
+  const micIntentionalStopRef = useRef<boolean>(false); // Distinguish intentional stop from unexpected track end
+  const micRecoveryInProgressRef = useRef<boolean>(false); // Prevent concurrent recovery attempts
+  const cableRestartTimestampRef = useRef<number>(0); // Rate-limit VB-CABLE restarts (min 30s between attempts)
+  const micHealthCheckRef = useRef<number | null>(null); // Interval ref for mic pipeline health check
+
   // Initialize AudioContext
   useEffect(() => {
     audioContextRef.current = new AudioContext();
+
+    // Auto-resume AudioContext if it gets suspended (Chromium autoplay policy)
+    audioContextRef.current.onstatechange = () => {
+      if (audioContextRef.current?.state === 'suspended') {
+        console.warn('AudioContext suspended, attempting to resume...');
+        audioContextRef.current.resume().catch(e =>
+          console.error('Failed to resume AudioContext:', e)
+        );
+      }
+    };
+
     return () => {
       audioContextRef.current?.close();
     };
@@ -529,6 +546,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (window.electronAPI) {
             const updated = await window.electronAPI.updateSettings({ outputDeviceId: cableDevice.deviceId });
             dispatch({ type: 'SET_SETTINGS', payload: updated });
+          }
+        } else {
+          // VB-CABLE completely gone — auto-restart it (rate-limited to once per 30s)
+          const now = Date.now();
+          if (now - cableRestartTimestampRef.current > 30000 && window.electronAPI) {
+            cableRestartTimestampRef.current = now;
+            console.warn('VB-CABLE disappeared, auto-restarting device...');
+            const result = await window.electronAPI.restartCable();
+            if (result.success) {
+              console.log('VB-CABLE restart triggered, waiting for device to reappear...');
+              // Wait for driver to re-initialize, then re-detect
+              setTimeout(async () => {
+                const newDevices = await refreshAudioDevices();
+                const newCable = newDevices.find((d) =>
+                  d.label.toLowerCase().includes('cable input') ||
+                  d.label.toLowerCase().includes('vb-audio')
+                );
+                if (newCable && window.electronAPI) {
+                  console.log('VB-CABLE reappeared after restart:', newCable.label);
+                  const updated = await window.electronAPI.updateSettings({ outputDeviceId: newCable.deviceId });
+                  dispatch({ type: 'SET_SETTINGS', payload: updated });
+                }
+              }, 5000);
+            } else {
+              console.error('VB-CABLE auto-restart failed:', result.error);
+            }
           }
         }
       }
@@ -1008,8 +1051,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const startMicPassthrough = useCallback(async () => {
     console.log('startMicPassthrough called');
 
-    // Create AudioContext if not exists
-    if (!audioContextRef.current) {
+    // Create AudioContext if not exists or closed
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new AudioContext();
     }
 
@@ -1038,17 +1081,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.log('Requesting mic with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       micStreamRef.current = stream;
-
-      // Monitor track state - auto-restart if mic stream dies
-      stream.getAudioTracks().forEach(track => {
-        track.addEventListener('ended', () => {
-          console.warn('Mic track ended unexpectedly, restarting passthrough');
-          stopMicPassthrough();
-          setTimeout(() => startMicPassthrough(), 500);
-        });
-      });
-
+      micIntentionalStopRef.current = false;
       console.log('Got mic stream with noise suppression');
+
+      // Auto-recovery: restart passthrough if mic track ends unexpectedly (device disconnect, driver crash)
+      stream.getTracks().forEach(track => {
+        track.onended = () => {
+          if (micIntentionalStopRef.current || micRecoveryInProgressRef.current) return;
+          console.warn('Mic track ended unexpectedly, attempting auto-recovery in 1s...');
+          micRecoveryInProgressRef.current = true;
+          setTimeout(async () => {
+            try {
+              stopMicPassthrough();
+              await startMicPassthrough();
+              console.log('Mic passthrough auto-recovered from track ended');
+            } catch (e) {
+              console.error('Mic auto-recovery failed:', e);
+            } finally {
+              micRecoveryInProgressRef.current = false;
+            }
+          }, 1000);
+        };
+      });
 
       // Resume audio context if suspended
       if (audioContextRef.current.state === 'suspended') {
@@ -1234,6 +1288,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [state.settings.micInputDeviceId, state.settings.micVolume, state.settings.outputDeviceId]);
 
   const stopMicPassthrough = useCallback(() => {
+    // Signal that this is an intentional stop (prevents auto-recovery from triggering)
+    micIntentionalStopRef.current = true;
+
     // Stop level monitoring
     if (micLevelIntervalRef.current) {
       clearInterval(micLevelIntervalRef.current);
@@ -1345,6 +1402,88 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       startMicPassthrough();
     }
   }, [state.settings.outputDeviceId, state.micPassthroughActive, stopMicPassthrough, startMicPassthrough]);
+
+  // Mic passthrough health check — auto-recover broken pipelines every 5s
+  useEffect(() => {
+    if (!state.micPassthroughActive) {
+      if (micHealthCheckRef.current) {
+        clearInterval(micHealthCheckRef.current);
+        micHealthCheckRef.current = null;
+      }
+      return;
+    }
+
+    micHealthCheckRef.current = window.setInterval(async () => {
+      if (micRecoveryInProgressRef.current || micIntentionalStopRef.current) return;
+
+      let needsRestart = false;
+      const reasons: string[] = [];
+
+      // Check 1: AudioContext state
+      if (audioContextRef.current?.state === 'suspended') {
+        try {
+          await audioContextRef.current.resume();
+          console.log('Mic health check: resumed suspended AudioContext');
+        } catch {
+          reasons.push('AudioContext suspended and could not resume');
+          needsRestart = true;
+        }
+      } else if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        reasons.push('AudioContext closed');
+        needsRestart = true;
+      }
+
+      // Check 2: Mic stream tracks still live
+      if (micStreamRef.current) {
+        const tracks = micStreamRef.current.getTracks();
+        if (tracks.length === 0 || tracks.some(t => t.readyState === 'ended')) {
+          reasons.push('mic track ended');
+          needsRestart = true;
+        }
+      } else {
+        reasons.push('mic stream lost');
+        needsRestart = true;
+      }
+
+      // Check 3: Output audio element still playing
+      if (micOutputAudioRef.current) {
+        if (micOutputAudioRef.current.paused) {
+          try {
+            await micOutputAudioRef.current.play();
+            console.log('Mic health check: resumed paused mic output audio');
+          } catch {
+            reasons.push('mic output audio paused and could not resume');
+            needsRestart = true;
+          }
+        }
+      } else {
+        reasons.push('mic output audio element lost');
+        needsRestart = true;
+      }
+
+      if (needsRestart) {
+        console.warn('Mic health check failed:', reasons.join(', '), '— restarting passthrough...');
+        micRecoveryInProgressRef.current = true;
+        try {
+          stopMicPassthrough();
+          await new Promise(r => setTimeout(r, 500));
+          await startMicPassthrough();
+          console.log('Mic passthrough auto-recovered by health check');
+        } catch (e) {
+          console.error('Mic health check recovery failed:', e);
+        } finally {
+          micRecoveryInProgressRef.current = false;
+        }
+      }
+    }, 5000);
+
+    return () => {
+      if (micHealthCheckRef.current) {
+        clearInterval(micHealthCheckRef.current);
+        micHealthCheckRef.current = null;
+      }
+    };
+  }, [state.micPassthroughActive, stopMicPassthrough, startMicPassthrough]);
 
   // Update monitor audio on playing sounds when monitor device changes
   const prevMonitorDeviceRef = useRef<string | null>(state.settings.monitorDeviceId ?? null);

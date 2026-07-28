@@ -1,0 +1,14 @@
+{
+  "name": "carbonboard-server",
+  "version": "1.0.0",
+  "description": "CarbonBoard clip library server — always-on HTTP backing for the Discord soundboard (clip CRUD + audio serving for Lavalink/browsers)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

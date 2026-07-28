@@ -1,0 +1,16 @@
+# CarbonBoard clip server — runs 24/7 on carbonserver (NOT the gaming rig, so
+# the Discord soundboard works with the rig off). Deploy:
+#   git clone https://github.com/CarbonNode/CarbonBoard.git C:\Programming\CarbonBoard
+#   cd C:\Programming\CarbonBoard\server
+#   docker compose up -d --build     (build via a one-shot scheduled task on Windows —
+#                                     docker build over ssh/agent hangs on the credential helper)
+# Clip audio for Lavalink/browsers: http://192.168.0.35:9601/clips/<id>.<ext>
+services:
+  carbonboard-server:
+    build: .
+    container_name: carbonboard-server
+    ports:
+      - "9601:9601"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

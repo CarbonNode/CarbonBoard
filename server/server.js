@@ -19,7 +19,7 @@ const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const DB_FILE = path.join(DATA_DIR, 'clips.json');
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const EXTS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'webm', 'opus']);
-const IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif']);
+const IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
 
 fs.mkdirSync(CLIPS_DIR, { recursive: true });
 fs.mkdirSync(IMAGES_DIR, { recursive: true });

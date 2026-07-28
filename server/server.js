@@ -15,11 +15,14 @@ import path from 'path';
 const PORT = Number(process.env.PORT || 9601);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const CLIPS_DIR = path.join(DATA_DIR, 'clips');
+const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const DB_FILE = path.join(DATA_DIR, 'clips.json');
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const EXTS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'webm', 'opus']);
+const IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif']);
 
 fs.mkdirSync(CLIPS_DIR, { recursive: true });
+fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 /** @type {Array<Record<string, unknown>>} */
 let clips = [];
@@ -137,8 +140,39 @@ app.delete('/api/clips/:id', (req, res) => {
   const [clip] = clips.splice(idx, 1);
   save();
   fs.promises.unlink(path.join(CLIPS_DIR, `${clip.id}.${clip.ext}`)).catch(() => {});
+  if (clip.image) fs.promises.unlink(path.join(IMAGES_DIR, path.basename(String(clip.image)))).catch(() => {});
   res.json({ ok: true });
 });
+
+// Button art — CarbonBoard's board is visual; a clip can carry a thumbnail.
+const imageUpload = multer({
+  storage: multer.diskStorage({
+    destination: IMAGES_DIR,
+    filename: (req, file, cb) => {
+      const ext = (path.extname(file.originalname).slice(1) || 'png').toLowerCase();
+      if (!IMG_EXTS.has(ext)) return cb(new Error(`Unsupported image format .${ext}`));
+      req.imgExt = ext;
+      cb(null, `${req.params.id}.${ext}`);
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
+
+app.post('/api/clips/:id/image', imageUpload.single('file'), (req, res) => {
+  const clip = clips.find(c => c.id === req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  if (!req.file || !req.imgExt) return res.status(400).json({ error: 'Missing image file' });
+  const prev = clip.image ? path.basename(String(clip.image)) : null;
+  clip.image = `/images/${clip.id}.${req.imgExt}`;
+  clip.updatedAt = new Date().toISOString();
+  save();
+  if (prev && prev !== `${clip.id}.${req.imgExt}`) {
+    fs.promises.unlink(path.join(IMAGES_DIR, prev)).catch(() => {});
+  }
+  res.json({ clip: publicClip(clip) });
+});
+
+app.use('/images', express.static(IMAGES_DIR, { fallthrough: false, immutable: true, maxAge: '365d' }));
 
 // Audio bytes — express.static gives us Range requests (browser scrubbing) free.
 app.use('/clips', express.static(CLIPS_DIR, {

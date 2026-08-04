@@ -471,6 +471,37 @@ function updateSettings(updates: Partial<Settings>): Settings {
   return getSettings();
 }
 
+/**
+ * Re-apply the OS "open at login" state to match the stored setting.
+ *
+ * setLoginItemSettings is otherwise only called when the user toggles the
+ * option, so the registry Run entry can silently drift out of sync with the
+ * saved preference — e.g. after a reinstall/update (NSIS removes the Run key on
+ * uninstall while the settings DB in userData survives with startWithWindows =
+ * true), or if the executable path changed. Running this on every launch
+ * rewrites the login item with the current exe path so "start with Windows"
+ * actually keeps working. Packaged-only: in dev we'd otherwise register the
+ * bare electron.exe.
+ */
+function reconcileLoginItem(): void {
+  if (!app.isPackaged) return;
+  const settings = getSettings();
+  const openAtLogin = settings.startWithWindows ?? false;
+  const current = app.getLoginItemSettings();
+  const desiredArgs = openAtLogin && settings.startMinimized ? ['--minimized'] : [];
+  // Always rewrite when enabled (path/args may be stale); when disabled, only
+  // touch it if the OS still thinks we should open at login.
+  if (openAtLogin) {
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      path: process.execPath,
+      args: desiredArgs,
+    });
+  } else if (current.openAtLogin) {
+    app.setLoginItemSettings({ openAtLogin: false, args: [] });
+  }
+}
+
 // ============================================================
 // File Operations
 // ============================================================
@@ -896,6 +927,7 @@ if (!gotTheLock) {
     });
 
     initDatabase();
+    reconcileLoginItem();
     setupIpcHandlers();
     createWindow();
     createTray();

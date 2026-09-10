@@ -12,7 +12,23 @@
 // notification looks like on this machine. A tasteful dark-brand card would be
 // prettier and would read as a different product.
 
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, screen, app } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/**
+ * The toast draws in the INTERACTIVE session, and anything diagnosing it
+ * remotely runs as SYSTEM in session 0 — which cannot enumerate these windows at
+ * all. Without a log there is no way to tell "it appeared and you missed it"
+ * from "it never ran", so every attempt leaves a line behind.
+ */
+function log(msg: string): void {
+  try {
+    const f = path.join(app.getPath('userData'), 'carbonboard-data', 'toast.log');
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.appendFileSync(f, `${new Date().toISOString()}  ${msg}\n`);
+  } catch { /* never fail a notification over its own logging */ }
+}
 
 let toastWin: BrowserWindow | null = null;
 let hideTimer: NodeJS.Timeout | null = null;
@@ -159,8 +175,13 @@ export function showAudioToast(
       height: H,
     });
 
+    const b = toastWin.getBounds();
+    log(`show "${profile}" mic=${mic ?? '-'} out=${output ?? '-'} at ${b.x},${b.y} ${b.width}x${b.height}`);
+    toastWin.webContents.once('did-finish-load', () => log('rendered'));
+    toastWin.webContents.on('did-fail-load', (_e, code, desc) => log(`FAILED ${code} ${desc}`));
     void toastWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html(profile, mic, output))}`);
     toastWin.showInactive();
+    log(`visible=${toastWin.isVisible()}`);
 
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
@@ -170,5 +191,6 @@ export function showAudioToast(
   } catch (err) {
     // A notification is never worth taking the app down for.
     console.error('[toast]', err);
+    log(`ERROR ${err instanceof Error ? err.message : String(err)}`);
   }
 }

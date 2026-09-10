@@ -46,6 +46,29 @@ const TERM_FG = '#00ff66';
 const TERM_DIM = '#00a040';
 
 /**
+ * The picture on the Stream Deck key, if there is one.
+ *
+ * These are copied out of the Elgato profile into deck-icons/<profile>.png, so
+ * the toast shows the SAME image you pressed. That is the whole point: the thing
+ * on screen should be recognisable as the thing under your finger. Falls back to
+ * a drawn glyph for profiles with no key.
+ */
+function deckIcon(profile: string): string | null {
+  try {
+    const f = path.join(
+      app.getPath('userData'), 'carbonboard-data', 'deck-icons',
+      `${profile.replace(/[^A-Za-z0-9]/g, '_')}.png`,
+    );
+    if (!fs.existsSync(f)) return null;
+    // Inlined as a data URI: the toast is itself a data: URL, so it has no
+    // origin to resolve a file path against.
+    return `data:image/png;base64,${fs.readFileSync(f).toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A glyph for the kind of thing you just switched to, picked from the device
  * name. Inline SVG rather than a bundled PNG: it is drawn once at one size, it
  * has to sit on a black terminal panel in phosphor green, and shipping four
@@ -87,7 +110,7 @@ const esc = (s: string): string =>
 /** Long device names have to fit one line without pushing the panel around. */
 const clip = (s: string, n = 34): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-function html(profile: string, mic: string | null, output: string | null): string {
+function html(profile: string, mic: string | null, output: string | null, error?: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   html,body{margin:0;padding:0;background:transparent;overflow:hidden;
     -webkit-user-select:none;cursor:default}
@@ -106,21 +129,31 @@ function html(profile: string, mic: string | null, output: string | null): strin
     padding:0 11px;box-sizing:border-box}
   .glyph{flex:0 0 auto;display:flex;align-items:center;justify-content:center}
   .lines{min-width:0;font-family:Consolas,'Courier New',monospace;line-height:1.45}
+  .bar.err{background:linear-gradient(90deg,#800000,#d03020)}
   .k{color:${TERM_FG};font-size:12px;font-weight:700;letter-spacing:.4px}
+  .k.bad,.name.bad{color:#ffb454}
+  .row.bad{color:#ffb454;white-space:normal}
   .name{color:${TERM_FG};font-size:15px;font-weight:700;margin-top:1px}
   .row{color:${TERM_DIM};font-size:11px;white-space:nowrap;overflow:hidden;
     text-overflow:ellipsis}
   .row b{color:${TERM_FG};font-weight:400}
   </style></head><body>
   <div class="win">
-    <div class="bar"><span>Carbon Cortex</span><span class="x">×</span></div>
+    <div class="bar${error ? ' err' : ''}"><span>Carbon Cortex</span><span class="x">×</span></div>
     <div class="term">
-      <div class="glyph">${deviceGlyph(profile, output)}</div>
+      <div class="glyph">${(() => {
+        const png = deckIcon(profile);
+        return png
+          ? `<img src="${png}" width="44" height="44" alt="" style="border-radius:5px;display:block">`
+          : deviceGlyph(profile, output);
+      })()}</div>
       <div class="lines">
-        <div class="k">&gt; AUDIO DEVICE SWITCHED</div>
-        <div class="name">${esc(profile)}</div>
-        ${output ? `<div class="row">out <b>${esc(clip(output))}</b></div>` : ''}
-        ${mic ? `<div class="row">mic <b>${esc(clip(mic))}</b></div>` : ''}
+        <div class="k${error ? ' bad' : ''}">&gt; ${error ? 'CANNOT SWITCH' : 'AUDIO DEVICE SWITCHED'}</div>
+        <div class="name${error ? ' bad' : ''}">${esc(profile)}</div>
+        ${error
+          ? `<div class="row bad">${esc(clip(error, 44))}</div>`
+          : `${output ? `<div class="row">out <b>${esc(clip(output))}</b></div>` : ''}
+             ${mic ? `<div class="row">mic <b>${esc(clip(mic))}</b></div>` : ''}`}
       </div>
     </div>
   </div></body></html>`;
@@ -136,6 +169,7 @@ export function showAudioToast(
   mic: string | null,
   output: string | null,
   ms = 3200,
+  error?: string,
 ): void {
   try {
     if (!toastWin || toastWin.isDestroyed()) {
@@ -176,10 +210,10 @@ export function showAudioToast(
     });
 
     const b = toastWin.getBounds();
-    log(`show "${profile}" mic=${mic ?? '-'} out=${output ?? '-'} at ${b.x},${b.y} ${b.width}x${b.height}`);
+    log(`show "${profile}" ${error ? `ERR=${error}` : `mic=${mic ?? '-'} out=${output ?? '-'}`} at ${b.x},${b.y} ${b.width}x${b.height}`);
     toastWin.webContents.once('did-finish-load', () => log('rendered'));
     toastWin.webContents.on('did-fail-load', (_e, code, desc) => log(`FAILED ${code} ${desc}`));
-    void toastWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html(profile, mic, output))}`);
+    void toastWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html(profile, mic, output, error))}`);
     toastWin.showInactive();
     log(`visible=${toastWin.isVisible()}`);
 

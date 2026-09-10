@@ -967,6 +967,13 @@ if (!gotTheLock) {
     });
     registerProfileHotkeys();
     void enforceAudioRig();
+    // Two of the Stream Deck keys are Multi-Action routines that set the device
+    // themselves and never send a keystroke. Watching the endpoint means those
+    // work identically to the hotkey ones, with nothing re-authored.
+    audioRig.startDeviceWatch(profile => {
+      showAudioToast(profile.name, profile.mic, profile.output);
+      mainWindow?.webContents.send('settings:updated');
+    });
     // A driver update, a newly-plugged headset or a leftover switcher can steal
     // the default recording device back, and the only symptom is that nobody
     // hears your clips any more. Cheap to re-assert; expensive to notice.
@@ -1036,7 +1043,14 @@ if (!gotTheLock) {
               showAudioToast(r.applied, r.mic, r.output);
               mainWindow?.webContents.send('settings:updated');
             })
-            .catch(err => console.error(`[audio] ${profile.name}:`, err));
+            .catch(err => {
+              // A key that does nothing and says nothing is indistinguishable
+              // from a key that is not wired up — which is exactly how the A50
+              // button read when its device lookup was failing.
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`[audio] ${profile.name}:`, err);
+              showAudioToast(profile.name, null, null, 5200, msg);
+            });
         });
         if (!ok) console.warn(`[audio] hotkey ${profile.hotkey} (${profile.name}) is taken — is SoundSwitch still running?`);
       } catch (err) {

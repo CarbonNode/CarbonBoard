@@ -232,8 +232,13 @@ public static class Audio {
     // Voice)" — and that number appears INSIDE the parenthesis, not just at the
     // start, while a profile saved before the renumber has no number at all.
     // Strip the counter wherever it sits, or every profile reads as inactive.
-    s = System.Text.RegularExpressions.Regex.Replace(s, @"\b\d+-\s*", "");
-    return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+    // NOTE the doubled backslashes: this C# lives inside a JS TEMPLATE LITERAL,
+    // so \\b would reach PowerShell as a BACKSPACE character (U+0008) and \\d as a
+    // bare "d". The emitted regex was "<BS>d+-s*", which matches nothing — so the
+    // "3- " Windows adds to a duplicated endpoint was never stripped and every
+    // profile failed to find its device with a confident "isn't plugged in".
+    s = System.Text.RegularExpressions.Regex.Replace(s, @"\\b\\d+-\\s*", "");
+    return System.Text.RegularExpressions.Regex.Replace(s, @"\\s+", " ").Trim();
   }
   public static bool SetDefault(string id) {
     if (id == null) return false;
@@ -417,4 +422,54 @@ Add-Type -AssemblyName System.Core
 $ins = @(); $outs = @()
 @{ inputs = @([Audio]::DefaultName($true)); outputs = @([Audio]::DefaultName($false)) } | ConvertTo-Json -Compress
 `);
+}
+
+// ── noticing a switch we did not make ────────────────────────────────────────
+
+/**
+ * Watch the default PLAYBACK device and react to whoever changed it.
+ *
+ * Not every switch comes through us. Two of the Stream Deck keys are Elgato
+ * Multi-Action routines rather than hotkeys — they set the device themselves and
+ * never send a keystroke, so the app that owns the mic would otherwise be the
+ * last to know. Watching the endpoint instead of trusting the trigger means the
+ * A50 key works exactly like the In Ear key without either being re-authored,
+ * and anything added later works too.
+ *
+ * When the output moves to a device a profile names, this adopts that profile:
+ * the capture mic follows, so the clips stay mixed with the right microphone.
+ */
+export function startDeviceWatch(
+  onExternalSwitch: (profile: AudioProfile) => void,
+  intervalMs = 2500,
+): void {
+  let last: string | null = null;
+  let busy = false;
+
+  const tick = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    try {
+      const cur = await ps<{ out: string | null }>(
+        `@{ out = [Audio]::DefaultName($false) } | ConvertTo-Json -Compress`, 12_000);
+      const out = cur.out ?? null;
+      if (out && last && out !== last) {
+        const hit = readProfiles().find(p => p.output && sameDevice(p.output, out));
+        // Only when it lands somewhere we have a name for. A device with no
+        // profile is a legitimate manual choice, not something to narrate.
+        if (hit && hit.mic && !sameDevice(hit.mic, captureMic)) {
+          setCaptureMic(hit.mic);
+          onExternalSwitch(hit);
+        }
+      }
+      last = out;
+    } catch {
+      // A poll that fails is not worth reporting; the next one usually works.
+    } finally {
+      busy = false;
+    }
+  };
+
+  void tick();
+  setInterval(() => { void tick(); }, Math.max(1000, intervalMs));
 }

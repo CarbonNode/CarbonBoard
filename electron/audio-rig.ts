@@ -240,6 +240,52 @@ public static class Audio {
     s = System.Text.RegularExpressions.Regex.Replace(s, @"\\b\\d+-\\s*", "");
     return System.Text.RegularExpressions.Regex.Replace(s, @"\\s+", " ").Trim();
   }
+  /**
+   * The endpoint's "Default Format" — the Advanced tab in mmsys.cpl. Reading it
+   * needs GetDeviceFormat, whose out-param is a WAVEFORMATEX** the caller owns.
+   */
+  public static int RateOf(bool capture, string nameContains) {
+    string id = FindId(capture, nameContains);
+    if (id == null) return -1;
+    var pc = (IPolicyConfig)(new CPolicyConfigClient());
+    IntPtr pp = Marshal.AllocHGlobal(IntPtr.Size);
+    Marshal.WriteIntPtr(pp, IntPtr.Zero);
+    int hr = pc.GetDeviceFormat(id, true, pp);
+    IntPtr fmt = Marshal.ReadIntPtr(pp);
+    Marshal.FreeHGlobal(pp);
+    if (hr != 0 || fmt == IntPtr.Zero) return -1;
+    int rate = Marshal.ReadInt32(fmt, 4);
+    Marshal.FreeCoTaskMem(fmt);
+    return rate;
+  }
+  /**
+   * Set that format. The registry copy under MMDevices is ACL-protected — even
+   * SYSTEM is refused — so IPolicyConfig is not merely convenient here, it is the
+   * only way to change it without taking ownership of a system key.
+   */
+  public static int SetFormat(bool capture, string nameContains, int rate) {
+    string id = FindId(capture, nameContains);
+    if (id == null) return -1;
+    short ch = 2, bits = 24;
+    short blockAlign = (short)(ch * bits / 8);
+    byte[] w = new byte[40];                                  // WAVEFORMATEXTENSIBLE
+    BitConverter.GetBytes((ushort)0xFFFE).CopyTo(w, 0);       // wFormatTag
+    BitConverter.GetBytes((ushort)ch).CopyTo(w, 2);
+    BitConverter.GetBytes((uint)rate).CopyTo(w, 4);
+    BitConverter.GetBytes((uint)(rate * blockAlign)).CopyTo(w, 8);
+    BitConverter.GetBytes((ushort)blockAlign).CopyTo(w, 12);
+    BitConverter.GetBytes((ushort)bits).CopyTo(w, 14);
+    BitConverter.GetBytes((ushort)22).CopyTo(w, 16);          // cbSize
+    BitConverter.GetBytes((ushort)bits).CopyTo(w, 18);        // wValidBitsPerSample
+    BitConverter.GetBytes((uint)3).CopyTo(w, 20);             // FL | FR
+    new Guid("00000001-0000-0010-8000-00aa00389b71").ToByteArray().CopyTo(w, 24); // PCM
+    IntPtr p = Marshal.AllocHGlobal(40);
+    Marshal.Copy(w, 0, p, 40);
+    var pc2 = (IPolicyConfig)(new CPolicyConfigClient());
+    int hr2 = pc2.SetDeviceFormat(id, p, p);
+    Marshal.FreeHGlobal(p);
+    return hr2;
+  }
   public static bool SetDefault(string id) {
     if (id == null) return false;
     var pc = (IPolicyConfig)(new CPolicyConfigClient());
@@ -419,6 +465,46 @@ if ($cur -match 'CABLE Output|VB-Audio') {
 }
 `, 20_000);
     return r.pinned;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Both ends of the cable must run at 48 kHz, because that is what everything
+ * else in the chain already is.
+ *
+ * This is the fix for the bug that looked like Discord's: a permanent solid
+ * green speaking ring, with the cable measurably at digital silence. Windows had
+ * the endpoints' default formats at 192000 Hz (CABLE Input) and 88200 Hz (CABLE
+ * Output) while VB-CABLE's own driver runs at 48000 (`VBAudioCableWDM_SR`), so
+ * every sample crossed two asynchronous resamplers — and 88.2k is the 44.1k
+ * family, not 48k's, so the conversion never lands on a whole ratio. The
+ * resampler's continuous artifacts are generated INSIDE Discord's capture path,
+ * downstream of anything an endpoint peak meter can see, which is why the cable
+ * reads as perfectly silent while Discord's voice-activity gate never closes:
+ * its trailing hangover is re-armed faster than it can expire.
+ *
+ * Asserted on the same schedule as the pin rather than set once — the Sound
+ * control panel, a driver update, or an app that requests a different shared
+ * format can all move it back, and the only symptom is a green ring nobody can
+ * explain. Reads first and only writes when it is actually wrong, so the common
+ * case does not restart the audio engine every minute.
+ */
+export async function ensureCableFormat(rate = 48_000): Promise<boolean> {
+  try {
+    const r = await ps<{ input: number; output: number; changed: boolean }>(`
+$inRate  = [Audio]::RateOf($false, 'CABLE Input')
+$outRate = [Audio]::RateOf($true,  'CABLE Output')
+$changed = $false
+if ($inRate  -gt 0 -and $inRate  -ne ${rate}) { [void][Audio]::SetFormat($false, 'CABLE Input',  ${rate}); $changed = $true }
+if ($outRate -gt 0 -and $outRate -ne ${rate}) { [void][Audio]::SetFormat($true,  'CABLE Output', ${rate}); $changed = $true }
+@{ input = $inRate; output = $outRate; changed = $changed } | ConvertTo-Json -Compress
+`, 20_000);
+    if (r.changed) {
+      console.log(`[audio-rig] cable format corrected to ${rate} Hz (was in=${r.input} out=${r.output})`);
+    }
+    return true;
   } catch {
     return false;
   }

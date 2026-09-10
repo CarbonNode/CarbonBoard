@@ -980,7 +980,10 @@ if (!gotTheLock) {
     // A driver update, a newly-plugged headset or a leftover switcher can steal
     // the default recording device back, and the only symptom is that nobody
     // hears your clips any more. Cheap to re-assert; expensive to notice.
-    setInterval(() => { void audioRig.ensureCablePinned(); }, 60_000);
+    setInterval(() => {
+      void audioRig.ensureCablePinned();
+      void audioRig.ensureCableFormat();
+    }, 60_000);
 
     // Handle start minimized (from command line or startup)
     const settings = getSettings();
@@ -1024,6 +1027,8 @@ if (!gotTheLock) {
     reconcileLoginItem();
     const pinned = await audioRig.ensureCablePinned();
     if (!pinned) console.warn('[audio] VB-CABLE is not installed — clips cannot reach the mic feed.');
+    // Both ends at 48 kHz, or Discord's voice gate never closes. See ensureCableFormat.
+    await audioRig.ensureCableFormat();
   }
 
   /**

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 144" width="144" height="144">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1420"/><stop offset="1" stop-color="#0b0810"/>
+    </linearGradient>
+    <linearGradient id="rog" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff3a5e"/><stop offset="1" stop-color="#c8102e"/>
+    </linearGradient>
+    <filter id="gl" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="144" height="144" rx="18" fill="url(#bg)"/>
+
+  <!-- Two true-wireless buds, mirrored: the driver housing as a rounded blob and
+       the stem angling down and out, which is the silhouette that reads as
+       "earbuds" rather than "headphones" at key size. -->
+  <g filter="url(#gl)">
+    <g fill="url(#rog)">
+      <path d="M52 40a17 17 0 1 0 0 34 17 17 0 0 0 0-34Z"/>
+      <path d="M44.5 70.5 39 100a7 7 0 0 0 13.4 3.6l6-27.8a17 17 0 0 1-13.9-5.3Z"/>
+      <path d="M92 40a17 17 0 1 1 0 34 17 17 0 0 1 0-34Z"/>
+      <path d="M99.5 70.5 105 100a7 7 0 0 1-13.4 3.6l-6-27.8a17 17 0 0 0 13.9-5.3Z"/>
+    </g>
+    <!-- The lit indicator each bud carries. -->
+    <circle cx="52" cy="57" r="4.6" fill="#ffd0d8"/>
+    <circle cx="92" cy="57" r="4.6" fill="#ffd0d8"/>
+  </g>
+</svg>

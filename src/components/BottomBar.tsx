@@ -183,9 +183,9 @@ export function BottomBar() {
               value={state.settings.micInputDeviceId || ''}
               onChange={handleMicInputChange}
               className="bg-bg-tertiary px-2 py-1 rounded text-xs max-w-[120px] focus:ring-2 focus:ring-accent"
-              title="Microphone input"
+              title="Microphone input — leave on Follow Windows default so switching profiles carries the soundboard with it"
             >
-              <option value="">Default Mic</option>
+              <option value="">Follow Windows default</option>
               {state.micInputDevices.map((device) => (
                 <option key={device.deviceId} value={device.deviceId}>
                   {device.label}

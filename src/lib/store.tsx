@@ -291,6 +291,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Mic passthrough refs
   const micStreamRef = useRef<MediaStream | null>(null);
+  // Read from a device-change callback, which closes over a stale `state`, so
+  // the live value has to come from a ref rather than the reducer.
+  const micPassthroughActiveRef = useRef(false);
+  const lastDefaultMicRef = useRef<string | null>(null);
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
   const micOutputAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -505,6 +509,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     init();
 
+    // Which physical mic "Windows default" currently points at. When the mic
+    // input is set to Default (the recommended setting), the passthrough has to
+    // be re-opened whenever that changes — getUserMedia binds a device at open
+    // time and keeps holding the old one, which is exactly how switching
+    // headsets used to leave the soundboard mixed with a dead microphone.
+    const defaultMicLabel = (devices: { deviceId: string; label: string }[]): string | null =>
+      devices.find(d => d.deviceId === 'default')?.label ?? null;
+
     // Listen for device changes
     const handleDeviceChange = async () => {
       const devices = await refreshAudioDevices();
@@ -524,6 +536,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         }
       }
+
+      await followDefaultMic();
+    };
+
+    /** Re-open the passthrough if it is following the default and that moved. */
+    const followDefaultMic = async () => {
+      const cur = state.settings;
+      // Only when the user chose Default; an explicitly picked mic is a choice
+      // to honour, not a thing to second-guess.
+      if (cur.micInputDeviceId) return;
+      if (!micPassthroughActiveRef.current) return;
+      const label = defaultMicLabel(await refreshAudioDevices());
+      if (!label || label === lastDefaultMicRef.current) return;
+      // Never follow the default onto the virtual cable: the soundboard's own
+      // output is on the other end of it, so that is a feedback loop.
+      if (/cable output|vb-audio/i.test(label)) {
+        console.warn('Default mic is the virtual cable — not following it (feedback loop).');
+        lastDefaultMicRef.current = label;
+        return;
+      }
+      console.log('Windows default mic changed ->', label, '- restarting passthrough');
+      lastDefaultMicRef.current = label;
+      micNoiseFloorRef.current = 10;
+      micNoiseFloorSamplesRef.current = [];
+      stopMicPassthrough();
+      setTimeout(() => { void startMicPassthrough(); }, 250);
     };
 
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
@@ -531,6 +569,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Periodic health check — verify output device is still valid every 30s
     const healthCheck = setInterval(async () => {
       const devices = await refreshAudioDevices();
+      // A profile switch changes which device is "default" without plugging
+      // anything in, and Chromium does not always fire devicechange for that.
+      await followDefaultMic();
       const currentSettings = state.settings;
       if (!currentSettings.outputDeviceId) return;
 
@@ -1279,10 +1320,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Using volume-based detection with browser's built-in noiseSuppression instead
       console.log('Using volume-based voice detection (browser noiseSuppression enabled)');
 
+      micPassthroughActiveRef.current = true;
       dispatch({ type: 'SET_MIC_PASSTHROUGH_ACTIVE', payload: true });
       console.log('Mic passthrough started successfully');
     } catch (error) {
       console.error('Failed to start mic passthrough:', error);
+      micPassthroughActiveRef.current = false;
       dispatch({ type: 'SET_MIC_PASSTHROUGH_ACTIVE', payload: false });
     }
   }, [state.settings.micInputDeviceId, state.settings.micVolume, state.settings.outputDeviceId]);
@@ -1336,6 +1379,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       micDestinationRef.current = null;
     }
 
+    micPassthroughActiveRef.current = false;
     dispatch({ type: 'SET_MIC_PASSTHROUGH_ACTIVE', payload: false });
     dispatch({ type: 'SET_MIC_LEVEL', payload: 0 });
     console.log('Mic passthrough stopped');

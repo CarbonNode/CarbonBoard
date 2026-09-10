@@ -17,6 +17,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import { initClipSync, syncClips, ensureClip, startPeriodicSync } from './clip-sync';
+import * as audioRig from './audio-rig';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
@@ -934,6 +936,21 @@ if (!gotTheLock) {
     registerAllHotkeys();
     startApiServer();
 
+    // The clip server is the library; this PC mirrors it. Sync runs on its own
+    // so a clip added from a phone is here by the time it is tapped.
+    initClipSync(
+      {
+        db,
+        soundsPath: SOUNDS_PATH,
+        onChanged: () => mainWindow?.webContents.send('settings:updated'),
+        createSound: createSound as unknown as (s: Record<string, unknown>) => { id: string },
+        getCategories,
+        createCategory,
+      },
+      process.env.CARBONBOARD_CLIP_SERVER,
+    );
+    startPeriodicSync(15);
+
     // Handle start minimized (from command line or startup)
     const settings = getSettings();
     const startMinimized = process.argv.includes('--minimized') || settings.startMinimized;
@@ -1066,6 +1083,113 @@ if (!gotTheLock) {
               message: `Playing "${sound.name}"`,
             })
           );
+          return;
+        }
+
+        // POST /api/play-clip — play by CLIP-SERVER id, the library everything
+        // else speaks. Pulls the clip first if this PC has never seen it, so a
+        // sound uploaded from a phone thirty seconds ago still works.
+        if (req.method === 'POST' && pathname === '/api/play-clip') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', async () => {
+            try {
+              const { clipId } = JSON.parse(body || '{}') as { clipId?: string };
+              if (!clipId) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'clipId required' }));
+                return;
+              }
+              const soundId = await ensureClip(clipId);
+              if (!soundId) {
+                res.writeHead(404);
+                res.end(JSON.stringify({ error: `Clip ${clipId} is not in the library` }));
+                return;
+              }
+              const sound = getSound(soundId);
+              mainWindow?.webContents.send('hotkey:triggered', soundId);
+              res.writeHead(200);
+              res.end(JSON.stringify({ success: true, sound: { id: soundId, name: sound?.name ?? null } }));
+            } catch (err) {
+              res.writeHead(500);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
+          return;
+        }
+
+        // POST /api/sync — mirror the clip server now.
+        if (req.method === 'POST' && pathname === '/api/sync') {
+          const result = await syncClips();
+          res.writeHead(result.ok ? 200 : 500);
+          res.end(JSON.stringify(result));
+          return;
+        }
+
+        // ── the audio rig (Voicemeeter) ──────────────────────────────────────
+        // Absent Voicemeeter these answer honestly rather than erroring: a PC
+        // that can play clips but cannot switch mics is a normal state, not a
+        // fault, and the console renders it as such.
+
+        if (req.method === 'GET' && pathname === '/api/audio/status') {
+          const st = await audioRig.status();
+          res.writeHead(200);
+          res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled }));
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/audio/devices') {
+          try {
+            res.writeHead(200);
+            res.end(JSON.stringify(await audioRig.listDevices()));
+          } catch (err) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: (err as Error).message }));
+          }
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/audio/profile') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', async () => {
+            try {
+              const { profile } = JSON.parse(body || '{}') as { profile?: string };
+              if (!profile) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'profile required' }));
+                return;
+              }
+              res.writeHead(200);
+              res.end(JSON.stringify(await audioRig.applyProfile(profile)));
+            } catch (err) {
+              res.writeHead(500);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
+          return;
+        }
+
+        // Mute is the soundboard's own passthrough, not a mixer channel: with
+        // no mixer in the chain, "mute my mic" means stop passing it through.
+        if (req.method === 'POST' && pathname === '/api/audio/mic') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', async () => {
+            try {
+              const { mute } = JSON.parse(body || '{}') as { mute?: boolean };
+              if (mute != null) {
+                updateSettings({ micPassthroughEnabled: !mute });
+                mainWindow?.webContents.send('settings:updated');
+              }
+              const st = await audioRig.status();
+              res.writeHead(200);
+              res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled }));
+            } catch (err) {
+              res.writeHead(500);
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          });
           return;
         }
 

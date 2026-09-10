@@ -1122,9 +1122,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (hit) resolvedId = hit.deviceId;
         else console.warn('Mic passthrough: no device matches label', wantLabel);
       }
+      // NEVER fall back to the system default. The default recording device is
+      // the virtual cable, and the passthrough's OUTPUT is the other end of it —
+      // so an unresolved label used to open a self-sustaining FEEDBACK LOOP:
+      // Discord saw a permanent green ring, the cable sat pinned near full scale,
+      // and the real microphone was never opened at all. Refusing is strictly
+      // better than howling; the retry below picks it up once devices resolve.
+      if (!resolvedId) {
+        console.warn('Mic passthrough: no device resolved — refusing to capture the default (that is the cable).');
+        setTimeout(() => { void startMicPassthrough(); }, 4000);
+        return;
+      }
+      const chosen = state.micInputDevices.find(d => d.deviceId === resolvedId);
+      if (chosen && /cable output|vb-audio/i.test(chosen.label)) {
+        console.warn('Mic passthrough: refusing to capture the virtual cable (feedback loop).');
+        return;
+      }
       const constraints: MediaStreamConstraints = {
         audio: {
-          deviceId: resolvedId ? { exact: resolvedId } : undefined,
+          deviceId: { exact: resolvedId },
           noiseSuppression: state.settings.micNoiseSuppression ?? false,
           echoCancellation: state.settings.micEchoCancellation ?? false,
           autoGainControl: state.settings.micAutoGainControl ?? false,

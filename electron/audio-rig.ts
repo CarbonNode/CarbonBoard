@@ -382,6 +382,15 @@ let captureMic: string | null = null;
 let onCaptureChange: ((label: string) => void) | null = null;
 export function setCaptureChangeHandler(fn: (label: string) => void): void { onCaptureChange = fn; }
 export function getCaptureMic(): string | null { return captureMic; }
+/**
+ * Adopt the persisted mic on boot WITHOUT re-notifying.
+ *
+ * captureMic is an in-memory mirror of a setting that survives restarts, so
+ * after a crash the passthrough came back on the right microphone while status
+ * reported "no profile active" — the audio was right and the display was
+ * lying, which is the worse of the two failures to leave in.
+ */
+export function primeCaptureMic(label: string | null): void { captureMic = label; }
 export function setCaptureMic(label: string): void {
   captureMic = label;
   onCaptureChange?.(label);

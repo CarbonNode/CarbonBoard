@@ -965,6 +965,9 @@ if (!gotTheLock) {
       updateSettings({ micInputLabel: label } as Partial<Settings>);
       mainWindow?.webContents.send('settings:updated');
     });
+    // Restore which physical mic we are mixing, so a restart does not report
+    // "no profile" while quietly capturing the right one.
+    audioRig.primeCaptureMic((getSettings() as unknown as { micInputLabel?: string | null }).micInputLabel ?? null);
     registerProfileHotkeys();
     void enforceAudioRig();
     // Two of the Stream Deck keys are Multi-Action routines that set the device

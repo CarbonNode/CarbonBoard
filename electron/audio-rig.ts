@@ -171,10 +171,12 @@ public static class Audio {
   static string Norm(string s) {
     if (s == null) return "";
     s = s.ToLowerInvariant().Trim();
-    // Windows prefixes a duplicate device with "2- ", which a saved profile may
-    // or may not carry depending on when it was saved.
-    while (s.Length > 2 && char.IsDigit(s[0]) && s[1] == '-') s = s.Substring(2).Trim();
-    return s;
+    // Windows numbers a duplicated endpoint — "Headset Microphone (3- Astro A50
+    // Voice)" — and that number appears INSIDE the parenthesis, not just at the
+    // start, while a profile saved before the renumber has no number at all.
+    // Strip the counter wherever it sits, or every profile reads as inactive.
+    s = System.Text.RegularExpressions.Regex.Replace(s, @"\b\d+-\s*", "");
+    return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
   }
   public static bool SetDefault(string id) {
     if (id == null) return false;
@@ -211,7 +213,9 @@ async function ps<T>(body: string, timeoutMs = 15_000): Promise<T> {
 /** Same normalisation as the C# side, for matching a profile to what's live. */
 function sameDevice(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
-  const norm = (s: string) => s.toLowerCase().replace(/^\d+-\s*/, '').replace(/\s+/g, ' ').trim();
+  // Same rule as the C# side: Windows' duplicate-endpoint counter can sit
+  // anywhere in the name ("Headset Microphone (3- Astro A50 Voice)").
+  const norm = (s: string) => s.toLowerCase().replace(/\b\d+-\s*/g, '').replace(/\s+/g, ' ').trim();
   const x = norm(a), y = norm(b);
   return x === y || x.includes(y) || y.includes(x);
 }

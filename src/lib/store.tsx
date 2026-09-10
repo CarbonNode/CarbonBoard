@@ -315,6 +315,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const micRecoveryInProgressRef = useRef<boolean>(false); // Prevent concurrent recovery attempts
   const cableRestartTimestampRef = useRef<number>(0); // Rate-limit VB-CABLE restarts (min 30s between attempts)
   const micHealthCheckRef = useRef<number | null>(null); // Interval ref for mic pipeline health check
+  /**
+   * The mic pipeline reads its configuration through these refs, never through
+   * `state` directly.
+   *
+   * startMicPassthrough and the devicechange listener are both created once, so
+   * the `state.settings` they close over is the INITIAL state — every field
+   * undefined — for the entire life of the app. That is not a style point, it is
+   * the bug that produced the permanent green ring in Discord: the restart path
+   * saw no configured mic, fell through to the system default, and the system
+   * default is the virtual cable this app feeds. It captured its own output.
+   */
+  const settingsRef = useRef(initialState.settings);
+  const micInputDevicesRef = useRef<AudioDevice[]>([]);
 
   // Initialize AudioContext
   useEffect(() => {
@@ -444,6 +457,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  settingsRef.current = state.settings;
+  micInputDevicesRef.current = state.micInputDevices;
+
   // Refresh audio devices
   const refreshAudioDevices = useCallback(async () => {
     try {
@@ -501,6 +517,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       dispatch({ type: 'SET_AUDIO_DEVICES', payload: audioOutputs });
       dispatch({ type: 'SET_MIC_INPUT_DEVICES', payload: audioInputs });
+      // Immediately, not on the next render: startMicPassthrough can run inside
+      // this same tick and must be able to match its mic by label.
+      micInputDevicesRef.current = audioInputs;
 
       return audioOutputs;
     } catch (error) {
@@ -541,6 +560,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // be re-opened whenever that changes — getUserMedia binds a device at open
     // time and keeps holding the old one, which is exactly how switching
     // headsets used to leave the soundboard mixed with a dead microphone.
+    /**
+     * The default RECORDING device. It must be given the capture list —
+     * refreshAudioDevices() returns the render list, so passing its result here
+     * read back the default speakers and reported them as a mic change.
+     */
     const defaultMicLabel = (devices: { deviceId: string; label: string }[]): string | null =>
       devices.find(d => d.deviceId === 'default')?.label ?? null;
 
@@ -569,13 +593,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     /** Re-open the passthrough if it is following the default and that moved. */
     const followDefaultMic = async () => {
-      const cur = state.settings;
+      const cur = settingsRef.current;
       // The profile switcher owns the mic now, by label. Following the system
       // default is not just unnecessary but wrong: the default recording device
       // is pinned to the virtual cable, and the cable carries our own output.
       if (cur.micInputLabel || cur.micInputDeviceId) return;
       if (!micPassthroughActiveRef.current) return;
-      const label = defaultMicLabel(await refreshAudioDevices());
+      await refreshAudioDevices();
+      const label = defaultMicLabel(micInputDevicesRef.current);
       if (!label || label === lastDefaultMicRef.current) return;
       // Never follow the default onto the virtual cable: the soundboard's own
       // output is on the other end of it, so that is a feedback loop.
@@ -1139,13 +1164,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Resolve the profile's mic by LABEL first. The system default is NOT a
       // useful fallback any more: with the virtual cable pinned as the default
       // recording device, capturing "default" would capture our own output.
-      const wantLabel = state.settings.micInputLabel ?? null;
-      let resolvedId: string | null = state.settings.micInputDeviceId ?? null;
+      const live = settingsRef.current;
+      const wantLabel = live.micInputLabel ?? null;
+      let resolvedId: string | null = live.micInputDeviceId ?? null;
+      const known = micInputDevicesRef.current;
       if (wantLabel) {
         const norm = (t: string) => t.toLowerCase().replace(/\b\d+-\s*/g, '').replace(/\s+/g, ' ').trim();
         const want = norm(wantLabel);
-        const hit = state.micInputDevices.find(d => norm(d.label) === want)
-          ?? state.micInputDevices.find(d => norm(d.label).includes(want) || want.includes(norm(d.label)));
+        const hit = known.find(d => norm(d.label) === want)
+          ?? known.find(d => norm(d.label).includes(want) || want.includes(norm(d.label)));
         if (hit) resolvedId = hit.deviceId;
         else console.warn('Mic passthrough: no device matches label', wantLabel);
       }
@@ -1160,7 +1187,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => { void startMicPassthrough(); }, 4000);
         return;
       }
-      const chosen = state.micInputDevices.find(d => d.deviceId === resolvedId);
+      const chosen = known.find(d => d.deviceId === resolvedId);
       if (chosen && /cable output|vb-audio/i.test(chosen.label)) {
         console.warn('Mic passthrough: refusing to capture the virtual cable (feedback loop).');
         return;
@@ -1168,9 +1195,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const constraints: MediaStreamConstraints = {
         audio: {
           deviceId: { exact: resolvedId },
-          noiseSuppression: state.settings.micNoiseSuppression ?? false,
-          echoCancellation: state.settings.micEchoCancellation ?? false,
-          autoGainControl: state.settings.micAutoGainControl ?? false,
+          noiseSuppression: live.micNoiseSuppression ?? false,
+          echoCancellation: live.micEchoCancellation ?? false,
+          autoGainControl: live.micAutoGainControl ?? false,
         },
       };
 

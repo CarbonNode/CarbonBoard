@@ -31,6 +31,8 @@ export interface AudioProfile {
   mic: string | null;
   /** Friendly name of this profile's playback device. */
   output: string | null;
+  /** Electron accelerator, e.g. "Control+Alt+Shift+P". Null = no hotkey. */
+  hotkey: string | null;
 }
 
 export interface AudioStatus {
@@ -41,6 +43,10 @@ export interface AudioStatus {
   /** What Windows is actually defaulting to right now. */
   currentMic: string | null;
   currentOutput: string | null;
+  /** The physical mic being mixed into the clip feed. */
+  captureMic: string | null;
+  /** Is the virtual cable pinned as the system recording device? */
+  cablePinned: boolean;
   micMuted: boolean;
   micGain: number;
 }
@@ -49,20 +55,50 @@ const SOUNDSWITCH_CONFIG = path.join(
   process.env.APPDATA ?? '', 'SoundSwitch', 'SoundSwitchConfiguration.json',
 );
 
-// ── SoundSwitch's own profiles ───────────────────────────────────────────────
+/** Our own copy, so SoundSwitch can be uninstalled without losing the profiles. */
+let profilesPath = '';
+export function setProfilesPath(p: string): void { profilesPath = p; }
+
+// SoundSwitch stores a hotkey as a virtual-key code plus a modifier bitmask.
+// Reading them rather than inventing new ones is the whole point: the Stream Deck
+// keys are these combinations, so importing them means the deck keeps working
+// against us with nothing rebound and nothing to remember.
+const SS_MOD = { CTRL: 2, ALT: 1, SHIFT: 4 } as const;
+
+function ssHotkey(hk: { Keys?: number; Modifier?: number; Enabled?: boolean } | undefined): string | null {
+  if (!hk?.Enabled || typeof hk.Keys !== 'number') return null;
+  const mod = hk.Modifier ?? 0;
+  const parts: string[] = [];
+  if (mod & SS_MOD.CTRL) parts.push('Control');
+  if (mod & SS_MOD.ALT) parts.push('Alt');
+  if (mod & SS_MOD.SHIFT) parts.push('Shift');
+  const key = vkToAccelerator(hk.Keys);
+  if (!key) return null;
+  parts.push(key);
+  return parts.join('+');
+}
+
+/** Windows virtual-key code → the name Electron's accelerator parser wants. */
+function vkToAccelerator(vk: number): string | null {
+  if (vk >= 0x30 && vk <= 0x39) return String.fromCharCode(vk);           // 0-9
+  if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk);           // A-Z
+  if (vk >= 0x70 && vk <= 0x7b) return `F${vk - 0x6f}`;                   // F1-F12
+  const punct: Record<number, string> = {
+    0xbd: '-', 0xbb: '=', 0xdb: '[', 0xdd: ']', 0xdc: '\\',
+    0xba: ';', 0xde: "'", 0xbc: ',', 0xbe: '.', 0xbf: '/', 0xc0: '`',
+  };
+  return punct[vk] ?? null;
+}
 
 interface SsDevice { Name?: string; NameClean?: string }
 interface SsProfile {
   Name?: string;
   Playback?: SsDevice; Recording?: SsDevice;
+  Triggers?: { HotKey?: { Keys?: number; Modifier?: number; Enabled?: boolean } }[];
 }
 
-/**
- * Read the profiles the user already made. Deliberately read-only: this file is
- * SoundSwitch's, it rewrites it whenever they change anything in its UI, and a
- * profile is theirs to name.
- */
-export function readProfiles(): AudioProfile[] {
+/** One-time import of the profiles (and their hotkeys) SoundSwitch already had. */
+export function importFromSoundSwitch(): AudioProfile[] {
   try {
     const raw = JSON.parse(fs.readFileSync(SOUNDSWITCH_CONFIG, 'utf-8')) as { Profiles?: SsProfile[] };
     return (raw.Profiles ?? [])
@@ -71,17 +107,38 @@ export function readProfiles(): AudioProfile[] {
         name: String(p.Name),
         mic: p.Recording?.NameClean ?? p.Recording?.Name ?? null,
         output: p.Playback?.NameClean ?? p.Playback?.Name ?? null,
+        hotkey: ssHotkey(p.Triggers?.[0]?.HotKey),
       }))
-      // A profile with neither half set is a leftover; it would show as a chip
-      // that does nothing.
-      .filter(p => p.mic || p.output);
+      .filter(p => p.mic || p.output)
+      // A profile whose mic IS the virtual cable was a workaround for the very
+      // problem this replaces — with the cable pinned as the system default it
+      // would mean "capture my own output", which is a feedback loop.
+      .filter(p => !/cable output|vb-audio/i.test(p.mic ?? ''));
   } catch {
     return [];
   }
 }
 
+export function readProfiles(): AudioProfile[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(profilesPath, 'utf-8')) as unknown;
+    if (Array.isArray(raw) && raw.length) {
+      return raw.filter((p): p is AudioProfile => !!p && typeof (p as AudioProfile).name === 'string');
+    }
+  } catch { /* fall through to the import */ }
+  // First run (or the file was emptied): adopt SoundSwitch's, then own them.
+  const imported = importFromSoundSwitch();
+  if (imported.length) writeProfiles(imported);
+  return imported;
+}
+
+export function writeProfiles(profiles: AudioProfile[]): void {
+  fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
+  fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2));
+}
+
 export function hasProfiles(): boolean {
-  return fs.existsSync(SOUNDSWITCH_CONFIG);
+  return readProfiles().length > 0;
 }
 
 // ── the Windows side ─────────────────────────────────────────────────────────
@@ -230,18 +287,23 @@ export async function status(): Promise<AudioStatus> {
         ? 'SoundSwitch has no profiles set up yet.'
         : 'SoundSwitch is not installed, so there are no device profiles to switch.',
       profiles: [], active: null, currentMic: null, currentOutput: null,
-      micMuted: false, micGain: 0,
+      captureMic: null, cablePinned: false, micMuted: false, micGain: 0,
     };
   }
   try {
     const cur = await ps<{ mic: string | null; out: string | null }>(`
 @{ mic = [Audio]::DefaultName($true); out = [Audio]::DefaultName($false) } | ConvertTo-Json -Compress
 `);
+    const cablePinned = isCable(cur.mic);
+    const captureMic = getCaptureMic();
     // A profile matches when every half it specifies is live. Judged from the
     // devices rather than a remembered name, so a switch made on the Stream Deck
     // shows up here correctly.
+    // Which profile is worn is judged by the PHYSICAL mic being captured and the
+    // playback device — never by the default recording device, which is pinned to
+    // the cable for good and would match every profile or none.
     const matches = (p: AudioProfile) =>
-      (!p.mic || sameDevice(p.mic, cur.mic)) && (!p.output || sameDevice(p.output, cur.out));
+      (!p.mic || sameDevice(p.mic, captureMic)) && (!p.output || sameDevice(p.output, cur.out));
     const active = profiles.find(matches)?.name ?? null;
     return {
       available: true,
@@ -249,6 +311,8 @@ export async function status(): Promise<AudioStatus> {
       active,
       currentMic: cur.mic,
       currentOutput: cur.out,
+      captureMic,
+      cablePinned,
       micMuted: false,
       micGain: 0,
     };
@@ -257,7 +321,8 @@ export async function status(): Promise<AudioStatus> {
       available: false,
       reason: err instanceof Error ? err.message : String(err),
       profiles: profiles.map(p => ({ ...p, active: false })),
-      active: null, currentMic: null, currentOutput: null, micMuted: false, micGain: 0,
+      active: null, currentMic: null, currentOutput: null,
+      captureMic: null, cablePinned: false, micMuted: false, micGain: 0,
     };
   }
 }
@@ -272,26 +337,69 @@ export async function applyProfile(name: string): Promise<AudioStatus> {
   const profile = readProfiles().find(p => p.name.toLowerCase() === name.toLowerCase());
   if (!profile) throw new Error(`No audio profile called "${name}"`);
 
-  const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  const parts: string[] = ['$done = @()'];
+  // What a profile switch does NOT do: touch the default recording device. That
+  // stays pinned to the virtual cable permanently, which is the whole reason
+  // Discord/OBS/games can sit on "Windows Default" and still hear the clips.
   if (profile.output) {
-    parts.push(`$id = [Audio]::FindId($false, ${q(profile.output)})`);
-    parts.push(`if ($id) { [void][Audio]::SetDefault($id); $done += 'output' } else { $done += 'output:missing' }`);
+    const q = `'${profile.output.replace(/'/g, "''")}'`;
+    const r = await ps<{ ok: boolean }>(`
+$id = [Audio]::FindId($false, ${q})
+if ($id) { [void][Audio]::SetDefault($id); @{ ok = $true } | ConvertTo-Json -Compress }
+else { @{ ok = $false } | ConvertTo-Json -Compress }
+`, 20_000);
+    if (!r.ok) throw new Error(`"${profile.name}" needs ${profile.output}, which isn't plugged in`);
   }
-  if (profile.mic) {
-    parts.push(`$id = [Audio]::FindId($true, ${q(profile.mic)})`);
-    parts.push(`if ($id) { [void][Audio]::SetDefault($id); $done += 'mic' } else { $done += 'mic:missing' }`);
-  }
-  parts.push(`@{ done = $done } | ConvertTo-Json -Compress`);
 
-  const r = await ps<{ done: string[] }>(parts.join('\n'), 20_000);
-  const missing = (r.done ?? []).filter(d => d.endsWith(':missing'));
-  if (missing.length === (r.done ?? []).length) {
-    // Every device in the profile is unplugged — say so rather than reporting a
-    // switch that changed nothing.
-    throw new Error(`"${profile.name}" needs a device that isn't plugged in`);
-  }
+  // The mic is a CarbonBoard setting, not a Windows one: the app captures this
+  // physical device and mixes it with the clips.
+  if (profile.mic) setCaptureMic(profile.mic);
+
+  await ensureCablePinned();
   return await status();
+}
+
+// ── the pinned cable ─────────────────────────────────────────────────────────
+
+const CABLE_RE = /cable output|vb-audio/i;
+export function isCable(name: string | null | undefined): boolean {
+  return !!name && CABLE_RE.test(name);
+}
+
+let captureMic: string | null = null;
+let onCaptureChange: ((label: string) => void) | null = null;
+export function setCaptureChangeHandler(fn: (label: string) => void): void { onCaptureChange = fn; }
+export function getCaptureMic(): string | null { return captureMic; }
+export function setCaptureMic(label: string): void {
+  captureMic = label;
+  onCaptureChange?.(label);
+}
+
+/**
+ * Make the virtual cable the system recording device, if it isn't already.
+ *
+ * Called on boot and after every profile switch. This is the one piece of Windows
+ * configuration the whole design depends on, so it is asserted continuously
+ * rather than set up once: anything that steals the default back (a driver
+ * update, plugging in a headset that grabs it, a leftover SoundSwitch profile)
+ * would otherwise silently take the clips out of the mic feed with no symptom
+ * except people saying they cannot hear them.
+ */
+export async function ensureCablePinned(): Promise<boolean> {
+  try {
+    const r = await ps<{ was: string | null; pinned: boolean }>(`
+$cur = [Audio]::DefaultName($true)
+if ($cur -match 'CABLE Output|VB-Audio') {
+  @{ was = $cur; pinned = $true } | ConvertTo-Json -Compress
+} else {
+  $id = [Audio]::FindId($true, 'CABLE Output')
+  if ($id) { [void][Audio]::SetDefault($id); @{ was = $cur; pinned = $true } | ConvertTo-Json -Compress }
+  else { @{ was = $cur; pinned = $false } | ConvertTo-Json -Compress }
+}
+`, 20_000);
+    return r.pinned;
+  } catch {
+    return false;
+  }
 }
 
 /** Every active endpoint, for troubleshooting a profile that won't take. */

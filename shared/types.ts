@@ -55,6 +55,12 @@ export interface Settings {
   // Mic passthrough settings
   micPassthroughEnabled: boolean;
   micInputDeviceId: string | null;
+  /**
+   * The physical mic to capture, BY LABEL. Preferred over micInputDeviceId:
+   * deviceId hashes are per-origin and are renumbered by Windows, which is how a
+   * pinned mic quietly became a different one. Set by the profile switcher.
+   */
+  micInputLabel?: string | null;
   monitorVolume: number;
   micVolume: number;
   micNoiseGate: number; // 0 = off, 1-100 = threshold

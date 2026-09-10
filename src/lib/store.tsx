@@ -543,9 +543,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     /** Re-open the passthrough if it is following the default and that moved. */
     const followDefaultMic = async () => {
       const cur = state.settings;
-      // Only when the user chose Default; an explicitly picked mic is a choice
-      // to honour, not a thing to second-guess.
-      if (cur.micInputDeviceId) return;
+      // The profile switcher owns the mic now, by label. Following the system
+      // default is not just unnecessary but wrong: the default recording device
+      // is pinned to the virtual cable, and the cable carries our own output.
+      if (cur.micInputLabel || cur.micInputDeviceId) return;
       if (!micPassthroughActiveRef.current) return;
       const label = defaultMicLabel(await refreshAudioDevices());
       if (!label || label === lastDefaultMicRef.current) return;
@@ -1108,11 +1109,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // Get mic input with optional browser audio processing
+      // Resolve the profile's mic by LABEL first. The system default is NOT a
+      // useful fallback any more: with the virtual cable pinned as the default
+      // recording device, capturing "default" would capture our own output.
+      const wantLabel = state.settings.micInputLabel ?? null;
+      let resolvedId: string | null = state.settings.micInputDeviceId ?? null;
+      if (wantLabel) {
+        const norm = (t: string) => t.toLowerCase().replace(/\b\d+-\s*/g, '').replace(/\s+/g, ' ').trim();
+        const want = norm(wantLabel);
+        const hit = state.micInputDevices.find(d => norm(d.label) === want)
+          ?? state.micInputDevices.find(d => norm(d.label).includes(want) || want.includes(norm(d.label)));
+        if (hit) resolvedId = hit.deviceId;
+        else console.warn('Mic passthrough: no device matches label', wantLabel);
+      }
       const constraints: MediaStreamConstraints = {
         audio: {
-          deviceId: state.settings.micInputDeviceId
-            ? { exact: state.settings.micInputDeviceId }
-            : undefined,
+          deviceId: resolvedId ? { exact: resolvedId } : undefined,
           noiseSuppression: state.settings.micNoiseSuppression ?? false,
           echoCancellation: state.settings.micEchoCancellation ?? false,
           autoGainControl: state.settings.micAutoGainControl ?? false,
@@ -1429,7 +1441,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       stopMicPassthrough();
       startMicPassthrough();
     }
-  }, [state.settings.micInputDeviceId, state.micPassthroughActive, stopMicPassthrough, startMicPassthrough]);
+  }, [state.settings.micInputDeviceId, state.settings.micInputLabel, state.micPassthroughActive, stopMicPassthrough, startMicPassthrough]);
 
   // Restart mic passthrough when output device changes (mic routes to output)
   const prevOutputDeviceRef = useRef<string | null>(state.settings.outputDeviceId);

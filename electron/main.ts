@@ -951,6 +951,26 @@ if (!gotTheLock) {
     );
     startPeriodicSync(15);
 
+    // ── the audio rig, asserted rather than assumed ──────────────────────────
+    // Everything below exists so that none of it ever has to be thought about:
+    // the app starts with Windows, the cable stays the system recording device,
+    // the passthrough stays on, and the profile hotkeys are the ones the Stream
+    // Deck already sends.
+    audioRig.setProfilesPath(path.join(APP_DATA_PATH, 'audio-profiles.json'));
+    audioRig.setCaptureChangeHandler(label => {
+      // The renderer captures BY LABEL, not by the deviceId hash: hashes are
+      // per-origin and change when Windows renumbers an endpoint, which is
+      // exactly how a pinned mic silently became the wrong one.
+      updateSettings({ micInputLabel: label } as Partial<Settings>);
+      mainWindow?.webContents.send('settings:updated');
+    });
+    registerProfileHotkeys();
+    void enforceAudioRig();
+    // A driver update, a newly-plugged headset or a leftover switcher can steal
+    // the default recording device back, and the only symptom is that nobody
+    // hears your clips any more. Cheap to re-assert; expensive to notice.
+    setInterval(() => { void audioRig.ensureCablePinned(); }, 60_000);
+
     // Handle start minimized (from command line or startup)
     const settings = getSettings();
     const startMinimized = process.argv.includes('--minimized') || settings.startMinimized;
@@ -973,6 +993,50 @@ if (!gotTheLock) {
       }
     }
     return '127.0.0.1';
+  }
+
+  /**
+   * The settings this rig must have for the soundboard to just work, applied on
+   * every boot instead of documented somewhere. Each one is a thing that stops
+   * clips reaching the far end if it drifts.
+   */
+  async function enforceAudioRig(): Promise<void> {
+    const s = getSettings();
+    const want: Partial<Settings> = {};
+    if (!s.startWithWindows) want.startWithWindows = true;
+    if (!s.startMinimized) want.startMinimized = true;
+    if (!s.micPassthroughEnabled) want.micPassthroughEnabled = true;
+    if (Object.keys(want).length) {
+      updateSettings(want);
+      mainWindow?.webContents.send('settings:updated');
+    }
+    reconcileLoginItem();
+    const pinned = await audioRig.ensureCablePinned();
+    if (!pinned) console.warn('[audio] VB-CABLE is not installed — clips cannot reach the mic feed.');
+  }
+
+  /**
+   * The profile hotkeys, taken from SoundSwitch's own config on first run.
+   *
+   * Registering the SAME combinations is what lets SoundSwitch be uninstalled
+   * without touching the Stream Deck: those keys send Ctrl+Alt+Shift+<key>, and
+   * from the deck's point of view nothing has changed about who answers.
+   */
+  function registerProfileHotkeys(): void {
+    for (const profile of audioRig.readProfiles()) {
+      if (!profile.hotkey) continue;
+      try {
+        globalShortcut.unregister(profile.hotkey);
+        const ok = globalShortcut.register(profile.hotkey, () => {
+          audioRig.applyProfile(profile.name)
+            .then(() => mainWindow?.webContents.send('settings:updated'))
+            .catch(err => console.error(`[audio] ${profile.name}:`, err));
+        });
+        if (!ok) console.warn(`[audio] hotkey ${profile.hotkey} (${profile.name}) is taken — is SoundSwitch still running?`);
+      } catch (err) {
+        console.warn(`[audio] bad hotkey for ${profile.name}:`, err);
+      }
+    }
   }
 
   function startApiServer() {

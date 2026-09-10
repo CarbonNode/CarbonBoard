@@ -447,9 +447,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Refresh audio devices
   const refreshAudioDevices = useCallback(async () => {
     try {
-      // Request mic permission to get device labels
+      // Unlock device LABELS. enumerateDevices() returns empty label strings
+      // until the page has held a microphone once, and the whole mic-by-label
+      // design depends on those labels.
+      //
+      // Two things here are load-bearing, and both were bugs:
+      //   1. The tracks MUST be stopped. This runs on startup and again on every
+      //      `devicechange`, so a leaked stream is a capture handle that lives as
+      //      long as the app does — CarbonBoard showed up in the audio-session
+      //      list holding TWO capture streams, one of them on CABLE Output.
+      //   2. It must never ask for `{ audio: true }`. That is the DEFAULT
+      //      recording device, which on this machine is deliberately the virtual
+      //      cable that CarbonBoard itself feeds. Asking for a named non-cable
+      //      device instead keeps the permission prompt off the loop entirely.
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const prior = await navigator.mediaDevices.enumerateDevices();
+        // A usable label is the proof this device is really named — on a cold
+        // first run every label is '' and there is nothing to pick from, so we
+        // fall back to the default for that one prompt and stop it immediately.
+        const safe = prior.find(
+          d => d.kind === 'audioinput'
+            && !!d.deviceId
+            && !!d.label
+            && d.deviceId !== 'default'
+            && d.deviceId !== 'communications'
+            && !/cable|vb-audio/i.test(d.label),
+        );
+        const probe = await navigator.mediaDevices.getUserMedia(
+          safe ? { audio: { deviceId: { exact: safe.deviceId } } } : { audio: true },
+        );
+        probe.getTracks().forEach(t => t.stop());
       } catch {
         // Permission denied, continue with limited device info
       }

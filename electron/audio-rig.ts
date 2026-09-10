@@ -333,7 +333,9 @@ export async function status(): Promise<AudioStatus> {
  * The soundboard follows on its own: its passthrough is opened on the default
  * device, so changing the default is the whole switch.
  */
-export async function applyProfile(name: string): Promise<AudioStatus> {
+export interface ApplyResult { applied: string; output: string | null; mic: string | null }
+
+export async function applyProfile(name: string): Promise<ApplyResult> {
   const profile = readProfiles().find(p => p.name.toLowerCase() === name.toLowerCase());
   if (!profile) throw new Error(`No audio profile called "${name}"`);
 
@@ -354,8 +356,14 @@ else { @{ ok = $false } | ConvertTo-Json -Compress }
   // physical device and mixes it with the clips.
   if (profile.mic) setCaptureMic(profile.mic);
 
-  await ensureCablePinned();
-  return await status();
+  // Deliberately does NOT re-read the audio stack before answering. Changing the
+  // default endpoint restarts the audio engine, and enumerating devices while
+  // that is settling blocks for a long time — long enough that the caller's
+  // request times out even though the switch itself already happened. The whole
+  // point of a profile key is that it feels instant, so we report what we set
+  // and let the next poll observe it.
+  void ensureCablePinned();
+  return { applied: profile.name, output: profile.output, mic: profile.mic };
 }
 
 // ── the pinned cable ─────────────────────────────────────────────────────────

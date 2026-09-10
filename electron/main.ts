@@ -1224,8 +1224,9 @@ if (!gotTheLock) {
                 res.end(JSON.stringify({ error: 'profile required' }));
                 return;
               }
+              const applied = await audioRig.applyProfile(profile);
               res.writeHead(200);
-              res.end(JSON.stringify(await audioRig.applyProfile(profile)));
+              res.end(JSON.stringify({ ok: true, ...applied }));
             } catch (err) {
               res.writeHead(500);
               res.end(JSON.stringify({ error: (err as Error).message }));

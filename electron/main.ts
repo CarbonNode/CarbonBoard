@@ -19,6 +19,7 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { initClipSync, syncClips, ensureClip, startPeriodicSync } from './clip-sync';
 import * as audioRig from './audio-rig';
+import { showAudioToast } from './toast';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
@@ -1029,7 +1030,12 @@ if (!gotTheLock) {
         globalShortcut.unregister(profile.hotkey);
         const ok = globalShortcut.register(profile.hotkey, () => {
           audioRig.applyProfile(profile.name)
-            .then(() => mainWindow?.webContents.send('settings:updated'))
+            .then(r => {
+              // The whole point of the key is that you get told. Without this you
+              // press it and stare at the tray wondering whether it took.
+              showAudioToast(r.applied, r.mic, r.output);
+              mainWindow?.webContents.send('settings:updated');
+            })
             .catch(err => console.error(`[audio] ${profile.name}:`, err));
         });
         if (!ok) console.warn(`[audio] hotkey ${profile.hotkey} (${profile.name}) is taken — is SoundSwitch still running?`);
@@ -1225,6 +1231,7 @@ if (!gotTheLock) {
                 return;
               }
               const applied = await audioRig.applyProfile(profile);
+              showAudioToast(applied.applied, applied.mic, applied.output);
               res.writeHead(200);
               res.end(JSON.stringify({ ok: true, ...applied }));
             } catch (err) {

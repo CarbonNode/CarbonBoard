@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import type { Category, SubCategory, Sound, Settings, AudioDevice, ViewMode } from '../../shared/types';
+import { findDeviceByLabel } from './deviceLabel';
 // VAD disabled - doesn't work in packaged Electron due to ASAR/WASM issues
 
 // ============================================================
@@ -1166,24 +1167,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // recording device, capturing "default" would capture our own output.
       const live = settingsRef.current;
       const wantLabel = live.micInputLabel ?? null;
-      let resolvedId: string | null = live.micInputDeviceId ?? null;
       const known = micInputDevicesRef.current;
+
+      // The LABEL is the source of truth, never the saved id. Chromium reassigns
+      // its deviceId hashes when Windows renumbers an endpoint, so a saved id can
+      // quietly come to mean a DIFFERENT microphone: that is how this once opened
+      // an Insta360 lapel mic while the A50 sat unused, held two capture streams
+      // at once, and left Discord showing a permanent green ring. A saved id is
+      // honoured only when there is no label, and only if it still names a device
+      // that exists.
+      let resolvedId: string | null = null;
       if (wantLabel) {
-        const norm = (t: string) => t.toLowerCase().replace(/\b\d+-\s*/g, '').replace(/\s+/g, ' ').trim();
-        const want = norm(wantLabel);
-        const hit = known.find(d => norm(d.label) === want)
-          ?? known.find(d => norm(d.label).includes(want) || want.includes(norm(d.label)));
+        const hit = findDeviceByLabel(known, wantLabel);
         if (hit) resolvedId = hit.deviceId;
         else console.warn('Mic passthrough: no device matches label', wantLabel);
+      } else if (live.micInputDeviceId) {
+        resolvedId = known.some(d => d.deviceId === live.micInputDeviceId)
+          ? live.micInputDeviceId
+          : null;
+        if (!resolvedId) console.warn('Mic passthrough: saved device id no longer names a real device');
       }
+
       // NEVER fall back to the system default. The default recording device is
-      // the virtual cable, and the passthrough's OUTPUT is the other end of it —
+      // the virtual cable, and the passthrough's OUTPUT is the other end of it,
       // so an unresolved label used to open a self-sustaining FEEDBACK LOOP:
       // Discord saw a permanent green ring, the cable sat pinned near full scale,
       // and the real microphone was never opened at all. Refusing is strictly
       // better than howling; the retry below picks it up once devices resolve.
       if (!resolvedId) {
-        console.warn('Mic passthrough: no device resolved — refusing to capture the default (that is the cable).');
+        console.warn('Mic passthrough: no device resolved, refusing to capture the default (that is the cable).');
         setTimeout(() => { void startMicPassthrough(); }, 4000);
         return;
       }
@@ -1203,6 +1215,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       console.log('Requesting mic with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Prove we opened the microphone we asked for. The id was resolved from
+      // the device list a moment ago; if that list shifted underneath us (a
+      // replug, a renumber) Chromium can hand back a different device. Opening
+      // the wrong mic SILENTLY is the whole failure this guards against.
+      const gotLabel = stream.getAudioTracks()[0]?.label ?? '';
+      if (wantLabel && gotLabel && !findDeviceByLabel([{ deviceId: resolvedId, label: gotLabel }], wantLabel)) {
+        console.warn('Mic passthrough: opened the wrong device, retrying', { wanted: wantLabel, got: gotLabel });
+        stream.getTracks().forEach(t => t.stop());
+        setTimeout(() => { void startMicPassthrough(); }, 2000);
+        return;
+      }
+
       micStreamRef.current = stream;
       micIntentionalStopRef.current = false;
       console.log('Got mic stream with noise suppression');

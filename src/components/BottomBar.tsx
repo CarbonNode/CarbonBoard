@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useApp } from '@/lib/store';
 import { SettingsModal } from './SettingsModal';
+import { findDeviceByLabel } from '../lib/deviceLabel';
 
 export function BottomBar() {
   const {
@@ -42,7 +43,12 @@ export function BottomBar() {
 
   const handleMicInputChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const deviceId = e.target.value || null;
-    updateSettings({ micInputDeviceId: deviceId });
+    // Save the NAME too. Ids are reassigned when Windows renumbers an endpoint,
+    // so the name is what resolution actually trusts.
+    const label = deviceId
+      ? state.micInputDevices.find((d) => d.deviceId === deviceId)?.label ?? null
+      : null;
+    updateSettings({ micInputDeviceId: deviceId, micInputLabel: label });
   };
 
   const handleMicVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -180,7 +186,7 @@ export function BottomBar() {
             </button>
 
             <select
-              value={state.settings.micInputDeviceId || ''}
+              value={findDeviceByLabel(state.micInputDevices, state.settings.micInputLabel)?.deviceId ?? ''}
               onChange={handleMicInputChange}
               className="bg-bg-tertiary px-2 py-1 rounded text-xs max-w-[120px] focus:ring-2 focus:ring-accent"
               title="Microphone input — leave on Follow Windows default so switching profiles carries the soundboard with it"

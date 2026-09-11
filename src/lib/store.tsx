@@ -292,6 +292,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Mic passthrough refs
   const micStreamRef = useRef<MediaStream | null>(null);
+  // Serialises startMicPassthrough. Its "stop the existing stream" step runs
+  // BEFORE the await on getUserMedia, so two overlapping starts each opened a
+  // stream and only the last one landed in micStreamRef -- the other became a
+  // capture handle nothing could ever close. Re-applying the profile (how the
+  // watchdog self-heals) stops only the referenced stream, so the orphan
+  // survived every heal and the app sat holding two microphones for hours.
+  const micStartGenRef = useRef(0);
   // Read from a device-change callback, which closes over a stale `state`, so
   // the live value has to come from a ref rather than the reducer.
   const micPassthroughActiveRef = useRef(false);
@@ -490,10 +497,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             && d.deviceId !== 'communications'
             && !/cable|vb-audio/i.test(d.label),
         );
-        const probe = await navigator.mediaDevices.getUserMedia(
-          safe ? { audio: { deviceId: { exact: safe.deviceId } } } : { audio: true },
-        );
-        probe.getTracks().forEach(t => t.stop());
+        // Probe ONLY while the labels are still hidden. The permission is
+        // granted once and stays granted, so re-opening a real microphone on
+        // every devicechange and every 30s health check bought nothing and
+        // cost a capture handle: any probe that fails to close is a second
+        // microphone the app then holds for its whole life, which is what the
+        // watchdog kept reporting as "2 microphones open at once".
+        const labelled = prior.some(d => d.kind === 'audioinput' && !!d.label);
+        if (!labelled) {
+          const probe = await navigator.mediaDevices.getUserMedia(
+            safe ? { audio: { deviceId: { exact: safe.deviceId } } } : { audio: true },
+          );
+          probe.getTracks().forEach(t => t.stop());
+        }
       } catch {
         // Permission denied, continue with limited device info
       }
@@ -1146,6 +1162,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const startMicPassthrough = useCallback(async () => {
     console.log('startMicPassthrough called');
 
+    // Claim this attempt. Any start already in flight is now stale and must
+    // close whatever it opens instead of leaking it.
+    const gen = ++micStartGenRef.current;
+
     // Create AudioContext if not exists or closed
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new AudioContext();
@@ -1216,6 +1236,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.log('Requesting mic with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
 
+      // A newer start, or a stop, overtook us while getUserMedia was open.
+      // Nothing else holds this stream, so close it here or it stays open for
+      // the life of the app.
+      if (gen !== micStartGenRef.current) {
+        console.warn('Mic passthrough: superseded while opening, closing the stream we just got.');
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
       // Prove we opened the microphone we asked for. The id was resolved from
       // the device list a moment ago; if that list shifted underneath us (a
       // replug, a renumber) Chromium can hand back a different device. Opening
@@ -1228,6 +1257,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Never overwrite a live stream: the one being replaced would be lost.
+      if (micStreamRef.current && micStreamRef.current !== stream) {
+        micStreamRef.current.getTracks().forEach(track => track.stop());
+      }
       micStreamRef.current = stream;
       micIntentionalStopRef.current = false;
       console.log('Got mic stream with noise suppression');
@@ -1440,6 +1473,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const stopMicPassthrough = useCallback(() => {
     // Signal that this is an intentional stop (prevents auto-recovery from triggering)
     micIntentionalStopRef.current = true;
+
+    // Invalidate any start still waiting on getUserMedia, so it closes what it
+    // opens rather than installing a microphone after we asked for silence.
+    micStartGenRef.current++;
 
     // Stop level monitoring
     if (micLevelIntervalRef.current) {

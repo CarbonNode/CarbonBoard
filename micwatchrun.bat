@@ -1,0 +1,1 @@
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Programming\CarbonBoard\micwatch.ps1

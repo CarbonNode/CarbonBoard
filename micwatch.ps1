@@ -1,0 +1,164 @@
+# CarbonBoard mic watchdog.
+#
+# The soundboard carries the microphone into Discord through a virtual cable.
+# When that chain breaks it breaks SILENTLY -- the app still reports a healthy
+# mic while actually holding the wrong device open, which is exactly how a
+# lapel mic got captured for an unknown length of time while the headset sat
+# unused and nobody could hear anything.
+#
+# So this does not ask the app how it is doing. It reads the Windows audio
+# sessions -- ground truth for who has which endpoint open -- and compares them
+# against the profile the app says is active. On a mismatch it re-applies the
+# profile, which restarts the passthrough and shows a toast on the desktop.
+#
+# MUST run in the interactive session: session 0 sees no audio sessions at all.
+
+$root = 'C:\Programming\CarbonBoard'
+$log  = Join-Path $root 'micwatch.log'
+$api  = 'http://127.0.0.1:9502'
+
+function Write-Log($msg) {
+  Add-Content -Path $log -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg)
+}
+
+# Windows renumbers a duplicated endpoint inside its name ("3- Astro A50") and
+# Chromium appends a USB id; neither means a different device.
+function Norm($s) {
+  if (-not $s) { return '' }
+  $t = $s.ToLower()
+  $t = [regex]::Replace($t, '\b\d+-\s*', '')
+  $t = [regex]::Replace($t, '\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*', ' ')
+  $t = [regex]::Replace($t, '\s+', ' ')
+  return $t.Trim()
+}
+
+function Get-Sessions {
+  $out = & (Join-Path $root '_who2.ps1') 2>$null
+  $section = ''
+  $rows = @()
+  foreach ($l in $out) {
+    $line = [string]$l
+    if ($line -match 'CAPTURE sessions') { $section = 'capture'; continue }
+    if ($line -match 'RENDER sessions')  { $section = 'render';  continue }
+    if ($line -match '^(.*?)\s+<--\s+PID\s+(\d+)\s+(\w+)\s+=\s+(.*)$') {
+      $rows += [pscustomobject]@{
+        kind = $section
+        dev  = $Matches[1].Trim()
+        proc = $Matches[4].Trim()
+      }
+    }
+  }
+  return $rows
+}
+
+function Test-Chain($wantMic) {
+  $rows  = Get-Sessions
+  $cbCap = @($rows | Where-Object { $_.kind -eq 'capture' -and $_.proc -match 'CarbonBoard' })
+  $cbRen = @($rows | Where-Object { $_.kind -eq 'render'  -and $_.proc -match 'CarbonBoard' })
+  $bad = @()
+
+  if ($cbCap.Count -eq 0) {
+    $bad += 'no microphone open at all'
+  } elseif ($cbCap.Count -gt 1) {
+    $bad += ('{0} microphones open at once: {1}' -f $cbCap.Count, (($cbCap | ForEach-Object { $_.dev }) -join ' | '))
+  } else {
+    $got = $cbCap[0].dev
+    if ((Norm $got) -match 'cable output|vb-audio') {
+      $bad += 'capturing the virtual cable -- that is a feedback loop'
+    } elseif ($wantMic -and (Norm $got) -ne (Norm $wantMic)) {
+      $bad += ("wrong microphone: has '{0}' open, profile wants '{1}'" -f $got, $wantMic)
+    }
+  }
+
+  if (-not ($cbRen | Where-Object { (Norm $_.dev) -match 'cable input' })) {
+    $bad += 'not feeding CABLE Input, so Discord receives nothing'
+  }
+
+  return [pscustomobject]@{ problems = $bad; mic = $(if ($cbCap.Count -ge 1) { $cbCap[0].dev } else { '(none)' }) }
+}
+
+try {
+  $status = (Invoke-WebRequest -UseBasicParsing "$api/api/audio/status" -TimeoutSec 8).Content | ConvertFrom-Json
+} catch {
+  Write-Log ('DOWN    CarbonBoard is not answering on :9502 -- {0}' -f $_.Exception.Message)
+  & "$env:SystemRoot\System32\msg.exe" * "CarbonBoard is not running - your Discord mic is dead." 2>$null
+  exit 1
+}
+
+$profileName = $status.active
+$wantMic     = $status.captureMic
+
+# A deliberate mute is not a fault. Do not heal the user back on-air.
+try {
+  $settings = (Invoke-WebRequest -UseBasicParsing "$api/api/settings" -TimeoutSec 8).Content | ConvertFrom-Json
+  if (-not $settings.micPassthroughEnabled) { Write-Log "idle    passthrough is switched off on purpose, leaving it alone"; exit 0 }
+} catch { }
+
+$check = Test-Chain $wantMic
+if ($check.problems.Count -eq 0) {
+  Write-Log ("ok      profile={0}  mic={1}" -f $profileName, $check.mic)
+  exit 0
+}
+
+Write-Log ("BROKEN  profile={0}  {1}" -f $profileName, ($check.problems -join '; '))
+
+# Heal by re-applying the active profile: that re-resolves the mic by name,
+# restarts the passthrough, and toasts on the desktop so it is not silent.
+try {
+  $body = @{ profile = $profileName } | ConvertTo-Json -Compress
+  Invoke-WebRequest -UseBasicParsing -Method POST -Uri "$api/api/audio/profile" `
+    -Body $body -ContentType 'application/json' -TimeoutSec 25 | Out-Null
+  Write-Log ("heal    re-applied profile '{0}'" -f $profileName)
+} catch {
+  Write-Log ('heal    FAILED -- {0}' -f $_.Exception.Message)
+}
+
+Start-Sleep -Seconds 8
+
+$after = Test-Chain $wantMic
+if ($after.problems.Count -eq 0) {
+  Write-Log ("healed  profile={0}  mic={1}" -f $profileName, $after.mic)
+  exit 0
+}
+
+Write-Log ("STILL BROKEN  {0}" -f ($after.problems -join '; '))
+
+# Re-applying the profile cannot close a capture stream the app has lost the
+# handle to. That orphan lives in Chromium's audio service and outlives every
+# heal, so the old behaviour was to pop a message box every five minutes and
+# wait for a human to restart the app. Restart it here instead -- that is the
+# only thing that clears an orphaned stream -- and only speak up if even that
+# does not fix it.
+$stamp = Join-Path $root 'micwatch.restart'
+$last  = if (Test-Path $stamp) { (Get-Item $stamp).LastWriteTime } else { [datetime]::MinValue }
+$exe   = Join-Path $env:LOCALAPPDATA 'Programs\carbonboard\CarbonBoard.exe'
+
+# The cooldown stops a genuinely broken machine being restarted every five
+# minutes forever; past it, telling the human is the right escalation.
+if ((Test-Path $exe) -and ((Get-Date) - $last).TotalMinutes -ge 30) {
+  Set-Content -Path $stamp -Value (Get-Date -Format 's')
+  Write-Log 'restart  self-heal failed, restarting CarbonBoard'
+  Get-Process CarbonBoard -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Seconds 3
+  Start-Process $exe
+  # Boot, enumerate the devices, re-apply the saved profile, open the mic.
+  Start-Sleep -Seconds 30
+
+  try {
+    $status2     = (Invoke-WebRequest -UseBasicParsing "$api/api/audio/status" -TimeoutSec 8).Content | ConvertFrom-Json
+    $profileName = $status2.active
+    $wantMic     = $status2.captureMic
+  } catch { }
+
+  $final = Test-Chain $wantMic
+  if ($final.problems.Count -eq 0) {
+    Write-Log ("restarted  profile={0}  mic={1}" -f $profileName, $final.mic)
+    exit 0
+  }
+  Write-Log ("STILL BROKEN AFTER RESTART  {0}" -f ($final.problems -join '; '))
+  & "$env:SystemRoot\System32\msg.exe" * ("Mic chain broken, restarting CarbonBoard did not fix it: " + ($final.problems -join '; ')) 2>$null
+  exit 2
+}
+
+& "$env:SystemRoot\System32\msg.exe" * ("Mic chain broken and self-heal failed: " + ($after.problems -join '; ')) 2>$null
+exit 2

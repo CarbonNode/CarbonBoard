@@ -44,3 +44,38 @@ CarbonBoard**, because re-applying a profile cannot close an orphaned stream G��
 ending the process can. A 30-minute cooldown (`micwatch.restart`) keeps a genuinely
 broken machine from restart-looping; past that it falls back to a `msg.exe` box.
 Log: `micwatch.log`.
+
+### `micguard.ps1` — keeping the Cetra's own mic disabled
+
+The ROG Cetra True Wireless SpeedNova carries playback and microphone over one 2.4 GHz
+link, and the buds drop that link to a mono narrowband telephony profile the moment
+**anything** opens their microphone — playback immediately goes tinny and robotic.
+Muting does not help: a muted stream is still an open stream. That mic is never wanted
+here, because the "In Ear" profile pairs the Cetras with the Insta360 lapel. So the cure
+is to keep the Cetra **capture** endpoint disabled and let nothing open it.
+
+Disabling it by hand does not stick, which is the whole reason this script exists.
+Windows stores the disabled flag per **device instance**, and the instance path contains
+the USB port the dongle is in — so moving the dongle to another port enumerates a
+brand-new, *enabled* endpoint and the tinny audio is back. `micguard.ps1` re-applies it
+every minute from the `CetraMicGuard` scheduled task (SYSTEM, highest, 1-minute
+repetition). Unlike `micwatch` it does not need the interactive session: PnP is
+session-agnostic, only audio *sessions* are not.
+
+Safety rail, do not remove it: under `SWD\MMDEVAPI` a render endpoint is `{0.0.0.*}` and
+a capture endpoint is `{0.0.1.*}`. A target must match `{0.0.1.*}` **and** a name pattern
+in `$blocked`, so the guard cannot disable the headphones themselves — the worst a bad
+pattern can do is mute a microphone. Add a device by adding a pattern; do **not**
+blocklist the Astro A50, whose mic the "Headphones" profile genuinely uses.
+
+It logs only when it acts or fails (`micguard.log`); the task's Last Run Time is the
+liveness proof. Verified end to end on 2026-09-12 by re-enabling the endpoint by hand and
+watching the guard put it back within 60 s.
+
+One diagnostic trap, because it cost an hour on 2026-09-12: the symptom was first blamed
+on CarbonBoard holding the wrong microphone, on the strength of the Windows per-app
+privacy flag (`CapabilityAccessManager\ConsentStore\microphone`, `LastUsedTimeStop == 0`).
+**That flag is per app, not per device** — it says an app has *a* mic open, never which
+one. Two days of `micwatch.log` and the live audio-session list both showed CarbonBoard
+holding only the Insta360. Use `_who2.ps1` (endpoint to PID, ground truth) instead, and
+remember it must run in the interactive session.

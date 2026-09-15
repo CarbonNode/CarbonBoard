@@ -171,6 +171,10 @@ export interface ElectronAPI {
   // Audio utilities
   restartCable: () => Promise<{ success: boolean; error?: string }>;
   onSettingsUpdated: (callback: () => void) => () => void;
+  reportMicTelemetry?: (t: {
+    passthrough: boolean; level: number; gateOpen: boolean; threshold: number; floor: number; clips: number;
+  }) => void;
+  onMicRestart?: (callback: () => void) => () => void;
 
   // Hotkeys
   registerHotkey: (hotkey: string, soundId: string) => Promise<boolean>;

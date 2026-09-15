@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, desktopCapturer } from 'electron';
 import type { Sound, Settings, Category, SubCategory } from './types';
+import type { MicTelemetry } from './chain-watch';
 
 // ============================================================
 // Preload Script - Exposes IPC to Renderer
@@ -129,6 +130,15 @@ const electronAPI = {
     const handler = () => callback();
     ipcRenderer.on('settings:updated', handler);
     return () => ipcRenderer.removeListener('settings:updated', handler);
+  },
+
+  // Mic chain: the renderer reports what SHOULD be on the cable; main watches
+  // what IS, and asks for a re-open when the two disagree (chain-watch.ts).
+  reportMicTelemetry: (t: MicTelemetry): void => ipcRenderer.send('mic:telemetry', t),
+  onMicRestart: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('mic:restart', handler);
+    return () => ipcRenderer.removeListener('mic:restart', handler);
   },
 
   // Utility to get file path from dropped File object

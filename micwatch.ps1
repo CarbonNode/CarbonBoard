@@ -87,6 +87,23 @@ try {
 
 $profileName = $status.active
 $wantMic     = $status.captureMic
+$chain       = $status.chain
+
+# The app's own signal-through watch (electron/chain-watch.ts) meters the cable
+# and re-opens the feed when signal is expected and none arrives. This outer
+# guard only escalates when THAT has given up: the feed has been judged dead
+# for a while and the in-app heals did not bring it back. Sessions can look
+# perfect while the cable is silent -- 2026-09-15 -- so this line is the one to
+# read when someone says "nobody could hear me".
+$chainNote = ''
+$stuck = $false
+if ($chain) {
+  $chainNote = ('  cable={0} dead={1} relaunches={2}' -f $(if ($chain.meterAlive) { 'metered' } else { 'NO-METER' }), $chain.deadEvents, $chain.relaunches)
+  if ($chain.stuckForMs -gt 90000) {
+    Write-Log ("STUCK   profile={0}  feed dead for {1}s despite the app's own heals{2}" -f $profileName, [int]($chain.stuckForMs / 1000), $chainNote)
+    $stuck = $true
+  }
+}
 
 # A deliberate mute is not a fault. Do not heal the user back on-air.
 try {
@@ -95,10 +112,11 @@ try {
 } catch { }
 
 $check = Test-Chain $wantMic
-if ($check.problems.Count -eq 0) {
-  Write-Log ("ok      profile={0}  mic={1}" -f $profileName, $check.mic)
+if ($check.problems.Count -eq 0 -and -not $stuck) {
+  Write-Log ("ok      profile={0}  mic={1}{2}" -f $profileName, $check.mic, $chainNote)
   exit 0
 }
+if ($stuck) { $check.problems += 'cable silent while signal expected, in-app heals exhausted' }
 
 Write-Log ("BROKEN  profile={0}  {1}" -f $profileName, ($check.problems -join '; '))
 
@@ -108,7 +126,11 @@ try {
   $body = @{ profile = $profileName } | ConvertTo-Json -Compress
   Invoke-WebRequest -UseBasicParsing -Method POST -Uri "$api/api/audio/profile" `
     -Body $body -ContentType 'application/json' -TimeoutSec 25 | Out-Null
-  Write-Log ("heal    re-applied profile '{0}'" -f $profileName)
+  # Re-applying the SAME profile does not restart the passthrough (same label,
+  # nothing to change), and a dead output sink is only rebuilt by a re-open.
+  Invoke-WebRequest -UseBasicParsing -Method POST -Uri "$api/api/audio/passthrough/restart" `
+    -TimeoutSec 15 | Out-Null
+  Write-Log ("heal    re-applied profile '{0}' and re-opened the passthrough" -f $profileName)
 } catch {
   Write-Log ('heal    FAILED -- {0}' -f $_.Exception.Message)
 }

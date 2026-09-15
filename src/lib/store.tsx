@@ -315,6 +315,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const micNoiseFloorRef = useRef<number>(10); // Track background noise level
   const micNoiseFloorSamplesRef = useRef<number[]>([]); // Rolling samples for noise floor
   const micGateOpenRef = useRef<boolean>(false); // Track if gate is currently open (speaking)
+  // What the main process's chain watch is told every 500 ms: the input level,
+  // whether the gate is open and how many clips are playing -- i.e. whether
+  // anything SHOULD be on the cable right now. Main meters the cable itself.
+  const micLevelRef = useRef<number>(0);
+  const micThresholdEffRef = useRef<number>(0);
+  const playingCountRef = useRef<number>(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null); // Track current preview audio
   // VAD disabled - using volume-based detection instead
 
@@ -1370,6 +1376,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         const rms = Math.sqrt(sum / dataArray.length);
         const level = Math.min(100, Math.round((rms / 128) * 100));
+        micLevelRef.current = level;
 
         dispatch({ type: 'SET_MIC_LEVEL', payload: level });
 
@@ -1398,6 +1405,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // Auto threshold = noise floor + margin
           threshold = Math.min(100, noiseFloor + AUTO_THRESHOLD_MARGIN);
         }
+
+        micThresholdEffRef.current = threshold;
 
         // Apply noise gate
         if (threshold > 0 && micGateGainRef.current) {
@@ -1721,6 +1730,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       startMicPassthrough();
     }
   }, [state.settings.micPassthroughEnabled, state.isLoading]);
+
+  useEffect(() => {
+    playingCountRef.current = state.playingSounds.size;
+  }, [state.playingSounds]);
+
+  // Telemetry for the chain watch (electron/chain-watch.ts). Sent from refs,
+  // never from `state`, for the same stale-closure reason as everything else in
+  // the mic pipeline. Cheap: one small IPC message twice a second.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.reportMicTelemetry) return;
+    const report = window.electronAPI.reportMicTelemetry;
+    const id = window.setInterval(() => {
+      report({
+        passthrough: micPassthroughActiveRef.current,
+        level: micLevelRef.current,
+        gateOpen: micGateOpenRef.current,
+        threshold: micThresholdEffRef.current,
+        floor: micNoiseFloorRef.current,
+        clips: playingCountRef.current,
+      });
+    }, 500);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // The heal the chain watch asks for when the cable is silent while signal is
+  // expected: tear the whole output path down and open it again.
+  //
+  // Clips are stopped too, deliberately. Chromium shares ONE physical output
+  // stream per device across every element routed to it, and that shared
+  // stream is exactly what dies. A clip still playing would keep the dead
+  // stream referenced, and the re-opened passthrough would join it. Everything
+  // routed to the cable has to let go for the sink to be rebuilt -- which is
+  // why the 2026-09-15 fix by hand (stop passthrough, wait, start) worked.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.onMicRestart) return;
+    return window.electronAPI.onMicRestart(() => {
+      console.warn('Chain watch: cable silent while signal expected - re-opening the output path');
+      stopAllSounds();
+      stopMicPassthrough();
+      micNoiseFloorRef.current = 10;
+      micNoiseFloorSamplesRef.current = [];
+      window.setTimeout(() => {
+        if (settingsRef.current.micPassthroughEnabled) void startMicPassthrough();
+      }, 800);
+    });
+  }, [stopAllSounds, stopMicPassthrough, startMicPassthrough]);
 
   // Cleanup on unmount
   useEffect(() => {

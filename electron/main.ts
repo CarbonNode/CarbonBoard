@@ -20,6 +20,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { initClipSync, syncClips, ensureClip, startPeriodicSync } from './clip-sync';
 import * as audioRig from './audio-rig';
 import { showAudioToast } from './toast';
+import { ChainWatch, wireRendererLog, type MicTelemetry } from './chain-watch';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
@@ -50,6 +51,8 @@ const APP_DATA_PATH = path.join(app.getPath('userData'), 'carbonboard-data');
 const SOUNDS_PATH = path.join(APP_DATA_PATH, 'sounds');
 const THUMBNAILS_PATH = path.join(APP_DATA_PATH, 'thumbnails');
 const DB_PATH = path.join(APP_DATA_PATH, 'carbonboard.db');
+// Judges the mic feed by what is on the cable, not by what the objects say. See chain-watch.ts.
+const chain = new ChainWatch(APP_DATA_PATH);
 
 // Ensure directories exist
 [APP_DATA_PATH, SOUNDS_PATH, THUMBNAILS_PATH].forEach((dir) => {
@@ -744,6 +747,9 @@ function createWindow(): void {
     mainWindow.loadFile(htmlPath);
   }
 
+  // The renderer's console on disk, so the next silent failure explains itself.
+  wireRendererLog(mainWindow.webContents, APP_DATA_PATH);
+
   // Handle close to tray
   mainWindow.on('close', (event) => {
     const settings = getSettings();
@@ -984,6 +990,20 @@ if (!gotTheLock) {
       void audioRig.ensureCablePinned();
       void audioRig.ensureCableFormat();
     }, 60_000);
+
+    // Signal-through watch: the renderer says when something should be on the
+    // cable, Windows says whether anything is, and a mismatch is healed by
+    // re-opening the output path (the only thing that fixed it by hand).
+    ipcMain.on('mic:telemetry', (_e, t: MicTelemetry) => chain.onTelemetry(t));
+    chain.start({
+      restartPassthrough: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return false;
+        mainWindow.webContents.send('mic:restart');
+        return true;
+      },
+      toast: (title, detail) => showAudioToast(title, detail, null),
+      captureMic: () => audioRig.getCaptureMic(),
+    });
 
     // Handle start minimized (from command line or startup)
     const settings = getSettings();
@@ -1226,7 +1246,17 @@ if (!gotTheLock) {
         if (req.method === 'GET' && pathname === '/api/audio/status') {
           const st = await audioRig.status();
           res.writeHead(200);
-          res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled }));
+          res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled, chain: chain.status() }));
+          return;
+        }
+
+        // POST /api/audio/passthrough/restart -- tear down and re-open the mic
+        // output path. What a human did on 2026-09-15 to bring a dead feed back;
+        // the chain watch does the same on its own, this is the manual handle.
+        if (req.method === 'POST' && pathname === '/api/audio/passthrough/restart') {
+          const ok = chain.heal('api');
+          res.writeHead(ok ? 200 : 503);
+          res.end(JSON.stringify({ ok, chain: chain.status() }));
           return;
         }
 
@@ -1558,6 +1588,7 @@ setInterval(()=>refresh(),3000);
   });
 
   app.on('will-quit', () => {
+    chain.stop();
     globalShortcut.unregisterAll();
     db?.close();
   });

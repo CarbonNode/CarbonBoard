@@ -315,6 +315,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const micNoiseFloorRef = useRef<number>(10); // Track background noise level
   const micNoiseFloorSamplesRef = useRef<number[]>([]); // Rolling samples for noise floor
   const micGateOpenRef = useRef<boolean>(false); // Track if gate is currently open (speaking)
+  // Gate timing. A gate that closes the instant the level dips is a gate that
+  // chops the gaps between words: speech is full of 100-300 ms holes that sit
+  // below any sane threshold, and every one of them used to cut the cable and
+  // cost the first consonant of the next word. Hold the gate open through them,
+  // and only sample the noise floor once it has been quiet long enough that the
+  // tail of the last word is out of the window.
+  const micGateBelowSinceRef = useRef<number>(0); // ms timestamp the level first fell below the close threshold while open; 0 = not below
+  const micGateOpenedAtRef = useRef<number>(0);
+  const micGateClosedAtRef = useRef<number>(0);
   // What the main process's chain watch is told every 500 ms: the input level,
   // whether the gate is open and how many clips are playing -- i.e. whether
   // anything SHOULD be on the cable right now. Main meters the cable itself.
@@ -1336,11 +1345,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       micNoiseFloorRef.current = 30; // Start with conservative estimate (will adapt)
       micNoiseFloorSamplesRef.current = [];
       micGateOpenRef.current = false;
+      micGateBelowSinceRef.current = 0;
+      micGateOpenedAtRef.current = 0;
+      micGateClosedAtRef.current = Date.now();
 
       // Start level monitoring
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       const NOISE_FLOOR_SAMPLE_COUNT = 40; // ~2 seconds of samples at 50ms interval
       const AUTO_THRESHOLD_MARGIN = 25; // Add this % above noise floor (was 15, increased for noisy environments)
+      const GATE_HOLD_MS = 400;     // stay open this long after the level drops, so the gaps between words do not close it
+      const GATE_ATTACK_S = 0.005;  // open fast: the first consonant is the one that gets lost
+      const GATE_RELEASE_S = 0.06;  // close gently: a 10 ms cut is an audible click on the far end
+      const FLOOR_SETTLE_MS = 600;  // sample the noise floor only once the gate has been closed this long
+      const FLOOR_CAP = 25;         // the auto threshold never exceeds FLOOR_CAP + margin: a gate that cannot open is worse than one that lets noise through
 
       const updateLevel = () => {
         if (!micAnalyserRef.current) return;
@@ -1387,8 +1404,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // Auto mode - dynamically calculate threshold based on noise floor
           const noiseFloor = micNoiseFloorRef.current;
 
-          // If gate is closed (not speaking), sample the noise floor
-          if (!micGateOpenRef.current) {
+          // If the gate is closed (not speaking) and has been for long enough that
+          // the tail of the last word is out of the window, sample the noise floor
+          if (!micGateOpenRef.current && Date.now() - micGateClosedAtRef.current >= FLOOR_SETTLE_MS) {
             micNoiseFloorSamplesRef.current.push(level);
             // Keep only recent samples
             if (micNoiseFloorSamplesRef.current.length > NOISE_FLOOR_SAMPLE_COUNT) {
@@ -1398,7 +1416,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (micNoiseFloorSamplesRef.current.length >= 10) {
               const avgNoise = micNoiseFloorSamplesRef.current.reduce((a, b) => a + b, 0)
                 / micNoiseFloorSamplesRef.current.length;
-              micNoiseFloorRef.current = Math.max(5, Math.round(avgNoise));
+              micNoiseFloorRef.current = Math.min(FLOOR_CAP, Math.max(5, Math.round(avgNoise)));
             }
           }
 
@@ -1413,17 +1431,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // Use hysteresis: open at threshold, close at threshold - 15 (larger gap to prevent flutter)
           const closeThreshold = Math.max(0, threshold - 15);
 
+          const now = Date.now();
           if (micGateOpenRef.current) {
-            // Gate is open - close if level drops below close threshold
+            // Gate is open. Dropping below the close threshold starts the hold
+            // clock; the gate closes only once it has stayed below for
+            // GATE_HOLD_MS. Any sample back above it resets the clock.
             if (level < closeThreshold) {
-              micGateGainRef.current.gain.linearRampToValueAtTime(0, audioContextRef.current!.currentTime + 0.01);
-              micGateOpenRef.current = false;
+              if (!micGateBelowSinceRef.current) micGateBelowSinceRef.current = now;
+              if (now - micGateBelowSinceRef.current >= GATE_HOLD_MS) {
+                const g = micGateGainRef.current.gain;
+                const t = audioContextRef.current!.currentTime;
+                g.cancelScheduledValues(t);
+                g.setValueAtTime(g.value, t);
+                g.linearRampToValueAtTime(0, t + GATE_RELEASE_S);
+                micGateOpenRef.current = false;
+                micGateClosedAtRef.current = now;
+                micGateBelowSinceRef.current = 0;
+                console.info(`gate closed after ${now - micGateOpenedAtRef.current}ms open (thr=${threshold} floor=${micNoiseFloorRef.current})`);
+              }
+            } else {
+              micGateBelowSinceRef.current = 0;
             }
           } else {
             // Gate is closed - open if level rises above threshold
             if (level >= threshold) {
-              micGateGainRef.current.gain.linearRampToValueAtTime(1, audioContextRef.current!.currentTime + 0.01);
+              const g = micGateGainRef.current.gain;
+              const t = audioContextRef.current!.currentTime;
+              g.cancelScheduledValues(t);
+              g.setValueAtTime(g.value, t);
+              g.linearRampToValueAtTime(1, t + GATE_ATTACK_S);
               micGateOpenRef.current = true;
+              micGateOpenedAtRef.current = now;
+              micGateBelowSinceRef.current = 0;
+              console.info(`gate open lvl=${level} thr=${threshold} floor=${micNoiseFloorRef.current} quiet-for=${micGateClosedAtRef.current ? now - micGateClosedAtRef.current : 0}ms`);
               // Clear noise floor samples when speaking starts
               if (micNoiseGateAutoRef.current) {
                 micNoiseFloorSamplesRef.current = [];

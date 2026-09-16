@@ -929,12 +929,34 @@ function setupIpcHandlers(): void {
 // App Lifecycle
 // ============================================================
 
+/**
+ * One line per lifecycle step into carbonboard-data/main.log. The renderer has
+ * renderer.log and the mic chain has chain.log, but a main process that dies
+ * before either exists leaves nothing at all -- which is exactly what happened
+ * at logon on 2026-09-16: no CarbonBoard, no log, no way to say why.
+ */
+function bootLog(line: string): void {
+  try {
+    fs.mkdirSync(APP_DATA_PATH, { recursive: true });
+    fs.appendFileSync(path.join(APP_DATA_PATH, 'main.log'),
+      `${new Date().toISOString()}  ${line}  pid=${process.pid} argv=${JSON.stringify(process.argv.slice(1))}\n`);
+  } catch { /* logging must never take the app down */ }
+}
+bootLog(`start  v${app.getVersion()} packaged=${app.isPackaged} exe=${process.execPath}`);
+process.on('uncaughtException', err => bootLog(`uncaught  ${err?.stack ?? err}`));
+process.on('unhandledRejection', reason => bootLog(`unhandled  ${(reason as Error)?.stack ?? String(reason)}`));
+
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+  bootLog('quit  another instance holds the single-instance lock; handing off');
   app.quit();
 } else {
+  app.on('ready', () => bootLog('ready'));
+  app.on('before-quit', () => bootLog('before-quit'));
+  app.on('render-process-gone', (_e, _wc, details) => bootLog(`render-process-gone  ${details.reason} exit=${details.exitCode}`));
+  app.on('child-process-gone', (_e, details) => bootLog(`child-process-gone  ${details.type} ${details.reason} exit=${details.exitCode}`));
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

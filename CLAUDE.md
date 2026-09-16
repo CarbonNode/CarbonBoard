@@ -173,3 +173,18 @@ nothing on CABLE Input is the proof.
   it falls back to the element path, clamped to 100% as before. Contexts are closed when the
   clip ends or is stopped, so the chain-watch heal (`stopAllSounds`) still releases the
   cable's shared output stream.
+
+### CarbonBoard did not start at logon (2026-09-16) — what the logs could and could not say
+
+Boot 09:38:29, logon 09:39:07, `micwatch` popped "CarbonBoard is not running - your Discord mic is
+dead" at 09:40:37 and then did nothing; `_watchdog.ps1` (logon trigger, repeat 2 min) started it at
+09:40:35. Nothing from the app itself between logon and that start — no renderer.log, no chain.log
+"start watching" — so the main process either never launched from the Run key or died before
+`whenReady`, and there was no main-process log to say which. Three changes:
+- `electron/main.ts` `bootLog()` → `carbonboard-data/main.log`: start (version, exe, argv), lock
+  handoff, ready, before-quit, render/child-process-gone, uncaught errors. **Read this first** the
+  next time the app is missing at logon.
+- `micwatch.ps1` DOWN branch now STARTS CarbonBoard (or restarts a hung one) and waits for :9502
+  before it will pop a message box.
+- `CarbonBoardWatchdog` task: logon trigger with a 30 s delay, repeating every 1 min (was no delay,
+  2 min); `_watchdog.ps1` logs every run (`ok pid=… since …` / `restarted`).

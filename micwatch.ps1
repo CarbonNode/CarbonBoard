@@ -80,8 +80,33 @@ function Test-Chain($wantMic) {
 try {
   $status = (Invoke-WebRequest -UseBasicParsing "$api/api/audio/status" -TimeoutSec 8).Content | ConvertFrom-Json
 } catch {
+  # Not answering usually means not RUNNING -- and this script runs in the
+  # interactive session, so it can start the app itself instead of telling a
+  # human to. 2026-09-16: after a reinstall CarbonBoard did not come up at
+  # logon; this branch popped "your Discord mic is dead" at boot+2min and
+  # then did nothing, and Rober had to open it by hand. Start it, wait for the
+  # API, and only speak up if that fails too. Electron's single-instance lock
+  # makes a duplicate launch harmless (it hands off and exits).
   Write-Log ('DOWN    CarbonBoard is not answering on :9502 -- {0}' -f $_.Exception.Message)
-  & "$env:SystemRoot\System32\msg.exe" * "CarbonBoard is not running - your Discord mic is dead." 2>$null
+  $exe = Join-Path $env:LOCALAPPDATA 'Programs\carbonboard\CarbonBoard.exe'
+  if (Test-Path $exe) {
+    if (-not (Get-Process CarbonBoard -ErrorAction SilentlyContinue)) {
+      Write-Log 'start   CarbonBoard is not running -- starting it'
+      Start-Process $exe -ArgumentList '--minimized'
+    } else {
+      Write-Log 'restart CarbonBoard is running but not answering -- restarting it'
+      Get-Process CarbonBoard -ErrorAction SilentlyContinue | Stop-Process -Force
+      Start-Sleep -Seconds 3
+      Start-Process $exe -ArgumentList '--minimized'
+    }
+    $up = $false
+    for ($i = 0; $i -lt 12 -and -not $up; $i++) {
+      Start-Sleep -Seconds 5
+      try { Invoke-WebRequest -UseBasicParsing "$api/api/audio/status" -TimeoutSec 5 | Out-Null; $up = $true } catch { }
+    }
+    if ($up) { Write-Log 'started CarbonBoard is answering again'; exit 0 }
+  }
+  & "$env:SystemRoot\System32\msg.exe" * "CarbonBoard is not running and could not be started - your Discord mic is dead." 2>$null
   exit 1
 }
 

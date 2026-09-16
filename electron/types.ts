@@ -41,6 +41,15 @@ export interface Sound {
 
 export type ViewMode = 'grid' | 'list';
 
+// Playback transport shared with the renderer (mirrored in shared/types.ts; the
+// electron tsconfig's rootDir keeps this side from importing that file).
+export interface PlayingSoundInfo {
+  id: string; name: string; position: number; duration: number; paused: boolean; startedAt: number;
+}
+export interface PlaybackTelemetry { sounds: PlayingSoundInfo[]; at: number }
+export interface PlaybackCommand { action: 'pause' | 'resume' | 'toggle' | 'stop'; soundId?: string }
+
+
 export interface Settings {
   masterVolume: number;
   outputDeviceId: string | null;

@@ -134,6 +134,33 @@ export type IpcEvents = {
 };
 
 // Preload API exposed to renderer
+/** One clip the renderer is playing right now, as reported to main every 250ms. */
+export interface PlayingSoundInfo {
+  id: string;
+  name: string;
+  /** Seconds into the (trimmed) clip. */
+  position: number;
+  /** Length of the (trimmed) clip in seconds. */
+  duration: number;
+  paused: boolean;
+  /** Epoch ms the clip was started, so a remote UI can interpolate between polls. */
+  startedAt: number;
+}
+
+export interface PlaybackTelemetry {
+  sounds: PlayingSoundInfo[];
+  at: number;
+}
+
+/**
+ * A transport command from the HTTP API. `soundId` targets one clip; without it
+ * pause/resume/toggle act on the most recently started clip and stop stops all.
+ */
+export interface PlaybackCommand {
+  action: 'pause' | 'resume' | 'toggle' | 'stop';
+  soundId?: string;
+}
+
 export interface ElectronAPI {
   // Database - Categories
   getCategories: () => Promise<Category[]>;
@@ -175,6 +202,10 @@ export interface ElectronAPI {
     passthrough: boolean; level: number; gateOpen: boolean; threshold: number; floor: number; clips: number;
   }) => void;
   onMicRestart?: (callback: () => void) => () => void;
+
+  // Playback transport (see PlaybackTelemetry / PlaybackCommand)
+  reportPlayback?: (p: PlaybackTelemetry) => void;
+  onPlaybackControl?: (callback: (cmd: PlaybackCommand) => void) => () => void;
 
   // Hotkeys
   registerHotkey: (hotkey: string, soundId: string) => Promise<boolean>;

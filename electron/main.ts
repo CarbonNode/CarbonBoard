@@ -17,7 +17,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import { initClipSync, syncClips, ensureClip, startPeriodicSync } from './clip-sync';
+import { initClipSync, syncClips, ensureClip, startPeriodicSync, clipIdForSound, soundIdForClip } from './clip-sync';
+import type { PlaybackTelemetry, PlaybackCommand } from './types';
 import * as audioRig from './audio-rig';
 import { showAudioToast } from './toast';
 import { ChainWatch, wireRendererLog, type MicTelemetry } from './chain-watch';
@@ -53,6 +54,47 @@ const THUMBNAILS_PATH = path.join(APP_DATA_PATH, 'thumbnails');
 const DB_PATH = path.join(APP_DATA_PATH, 'carbonboard.db');
 // Judges the mic feed by what is on the cable, not by what the objects say. See chain-watch.ts.
 const chain = new ChainWatch(APP_DATA_PATH);
+
+// Last playback report from the renderer (see ipcMain 'playback:state').
+let playback: PlaybackTelemetry = { sounds: [], at: 0 };
+let playbackAt = 0;
+
+/**
+ * The transport view the HTTP API hands out: each playing clip with the server
+ * clip id it mirrors (the console keys its tiles on that), plus the two knobs a
+ * remote transport needs to show. A report older than 3s means the renderer is
+ * gone or wedged, and an empty list beats a frozen one.
+ */
+function playbackView() {
+  const fresh = playbackAt && Date.now() - playbackAt < 3_000;
+  const settings = getSettings();
+  return {
+    sounds: fresh ? playback.sounds.map(s => ({ ...s, clipId: clipIdForSound(s.id) })) : [],
+    at: playback.at,
+    allowConcurrentPlayback: !!settings.allowConcurrentPlayback,
+    masterVolume: typeof settings.masterVolume === 'number' ? settings.masterVolume : 1,
+    monitorVolume: typeof settings.monitorVolume === 'number' ? settings.monitorVolume : 1,
+  };
+}
+
+/** Read a JSON body; an empty or malformed body is `{}` (the old no-body callers). */
+function readJsonBody(req: import('http').IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise(resolve => {
+    let body = '';
+    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try { resolve(body ? JSON.parse(body) as Record<string, unknown> : {}); } catch { resolve({}); }
+    });
+    req.on('error', () => resolve({}));
+  });
+}
+
+/** `soundId` wins; a `clipId` (the console's vocabulary) is mapped through the sync table. */
+function targetSoundId(body: Record<string, unknown>): string | undefined {
+  if (typeof body['soundId'] === 'string' && body['soundId']) return body['soundId'];
+  if (typeof body['clipId'] === 'string' && body['clipId']) return soundIdForClip(body['clipId']) ?? undefined;
+  return undefined;
+}
 
 // Ensure directories exist
 [APP_DATA_PATH, SOUNDS_PATH, THUMBNAILS_PATH].forEach((dir) => {
@@ -995,6 +1037,10 @@ if (!gotTheLock) {
     // cable, Windows says whether anything is, and a mismatch is healed by
     // re-opening the output path (the only thing that fixed it by hand).
     ipcMain.on('mic:telemetry', (_e, t: MicTelemetry) => chain.onTelemetry(t));
+    // What is playing, for /api/playing. The renderer owns the audio elements, so
+    // main can only know this second-hand; it reports every 250ms while anything
+    // plays and once more (empty) when the last clip ends.
+    ipcMain.on('playback:state', (_e, p: PlaybackTelemetry) => { playback = p; playbackAt = Date.now(); });
     chain.start({
       restartPassthrough: () => {
         if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -1246,7 +1292,15 @@ if (!gotTheLock) {
         if (req.method === 'GET' && pathname === '/api/audio/status') {
           const st = await audioRig.status();
           res.writeHead(200);
-          res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled, chain: chain.status() }));
+          res.end(JSON.stringify({ ...st, micMuted: !getSettings().micPassthroughEnabled, chain: chain.status(), playback: playbackView() }));
+          return;
+        }
+
+        // GET /api/playing -- the transport: what is playing, how far in, paused
+        // or not, plus the layering flag and the two loudness knobs.
+        if (req.method === 'GET' && pathname === '/api/playing') {
+          res.writeHead(200);
+          res.end(JSON.stringify(playbackView()));
           return;
         }
 
@@ -1318,18 +1372,39 @@ if (!gotTheLock) {
         }
 
         // POST /api/stop — stop all sounds
+        // Optional body { soundId } or { clipId } stops just that clip (layering
+        // mode); no body keeps the old meaning, stop everything.
         if (req.method === 'POST' && pathname === '/api/stop') {
-          mainWindow?.webContents.send('hotkey:stopAll');
+          const body = await readJsonBody(req);
+          const soundId = targetSoundId(body);
+          if (soundId) {
+            const cmd: PlaybackCommand = { action: 'stop', soundId };
+            mainWindow?.webContents.send('playback:control', cmd);
+          } else {
+            mainWindow?.webContents.send('hotkey:stopAll');
+          }
           res.writeHead(200);
-          res.end(JSON.stringify({ success: true, message: 'Stopped all sounds.' }));
+          res.end(JSON.stringify({ success: true, message: soundId ? 'Stopped that sound.' : 'Stopped all sounds.' }));
           return;
         }
 
         // POST /api/pause — pause/resume
+        // Body { action: pause|resume|toggle, soundId|clipId } targets one clip;
+        // no body toggles the last-started clip, which is what the hotkey does.
         if (req.method === 'POST' && pathname === '/api/pause') {
-          mainWindow?.webContents.send('hotkey:pauseResume');
+          const body = await readJsonBody(req);
+          const rawAction = String(body['action'] ?? 'toggle');
+          const action: PlaybackCommand['action'] =
+            rawAction === 'pause' || rawAction === 'resume' ? rawAction : 'toggle';
+          const soundId = targetSoundId(body);
+          if (!soundId && action === 'toggle') {
+            mainWindow?.webContents.send('hotkey:pauseResume');
+          } else {
+            const cmd: PlaybackCommand = { action, ...(soundId ? { soundId } : {}) };
+            mainWindow?.webContents.send('playback:control', cmd);
+          }
           res.writeHead(200);
-          res.end(JSON.stringify({ success: true, message: 'Toggled pause/resume.' }));
+          res.end(JSON.stringify({ success: true, message: `Sent ${action}.` }));
           return;
         }
 

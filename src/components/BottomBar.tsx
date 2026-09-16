@@ -289,12 +289,12 @@ export function BottomBar() {
             <input
               type="range"
               min="0"
-              max="1"
-              step="0.01"
+              max="4"
+              step="0.05"
               value={state.settings.masterVolume}
               onChange={handleMasterVolumeChange}
               className="w-16 flex-shrink-0"
-              title="Volume others hear (Discord/streaming)"
+              title="Volume others hear (Discord/streaming). Past 100% the clip is boosted through a gain stage and will distort on purpose."
             />
             <span className="text-xs text-text-secondary w-7 flex-shrink-0">
               {Math.round(state.settings.masterVolume * 100)}%
@@ -307,8 +307,8 @@ export function BottomBar() {
             <input
               type="range"
               min="0"
-              max="1"
-              step="0.01"
+              max="4"
+              step="0.05"
               value={state.settings.monitorVolume ?? 1}
               onChange={handleMonitorVolumeChange}
               className="w-12 flex-shrink-0"

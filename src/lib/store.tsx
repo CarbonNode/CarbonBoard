@@ -12,9 +12,61 @@ import { findDeviceByLabel } from './deviceLabel';
 interface PlayingAudio {
   audio: HTMLAudioElement;
   monitorAudio: HTMLAudioElement | null;  // Secondary audio for local monitoring
-  soundVolume: number; // Individual sound volume (0-1)
+  soundVolume: number; // Individual sound volume (clip server allows 0-2)
   paused: boolean; // Whether this sound is paused (not stopped)
+  /**
+   * Web Audio gain stages, when the output could be routed through one. An
+   * <audio> element caps at 100%; a GainNode does not, which is what lets the
+   * master go to 400%. null = the element path (volume clamped to 1).
+   */
+  gain: GainNode | null;
+  monitorGain: GainNode | null;
+  /** The contexts behind those gains, closed when the clip ends or is stopped. */
+  contexts: AudioContext[];
+  startedAt: number;
 }
+
+/** How loud a clip may be asked to go: 2x clip boost x 4x master. Web Audio clips past 0 dBFS, so past ~1 this is deliberately crunchy. */
+const MAX_GAIN = 8;
+const clampGain = (v: number) => Math.min(MAX_GAIN, Math.max(0, Number.isFinite(v) ? v : 1));
+
+/**
+ * Route an <audio> element through a GainNode on its own AudioContext so its
+ * loudness is not capped at 100%. `sinkId` null/'default' = the default output.
+ * Returns null when the browser cannot put a context on that sink (older
+ * Chromium, or a special id like "communications"), and the caller falls back
+ * to the element's own volume.
+ */
+async function attachGain(
+  audio: HTMLAudioElement, sinkId: string | null | undefined, gain: number,
+): Promise<{ ctx: AudioContext; gain: GainNode } | null> {
+  let ctx: AudioContext | null = null;
+  try {
+    ctx = new AudioContext();
+    if (sinkId && sinkId !== 'default') {
+      const c = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> };
+      if (typeof c.setSinkId !== 'function') throw new Error('AudioContext.setSinkId unavailable');
+      await c.setSinkId(sinkId);
+    }
+    const src = ctx.createMediaElementSource(audio);
+    const g = ctx.createGain();
+    g.gain.value = clampGain(gain);
+    src.connect(g);
+    g.connect(ctx.destination);
+    if (ctx.state === 'suspended') await ctx.resume();
+    // The element's own volume still multiplies in front of the source node.
+    audio.volume = 1;
+    return { ctx, gain: g };
+  } catch (e) {
+    console.warn('Gain path unavailable, using element volume (capped at 100%):', e);
+    if (ctx) { try { await ctx.close(); } catch { /* fine */ } }
+    return null;
+  }
+}
+
+const closeContexts = (p: PlayingAudio) => {
+  for (const c of p.contexts) { c.close().catch(() => {}); }
+};
 
 interface AppState {
   categories: Category[];
@@ -57,7 +109,7 @@ type Action =
   | { type: 'SET_MIC_LEVEL'; payload: number }
   | { type: 'SET_SELECTED_CATEGORY'; payload: string | null }
   | { type: 'SET_SEARCH_QUERY'; payload: string }
-  | { type: 'ADD_PLAYING_SOUND'; payload: { id: string; audio: HTMLAudioElement; monitorAudio: HTMLAudioElement | null; soundVolume: number } }
+  | { type: 'ADD_PLAYING_SOUND'; payload: { id: string; audio: HTMLAudioElement; monitorAudio: HTMLAudioElement | null; soundVolume: number; gain: GainNode | null; monitorGain: GainNode | null; contexts: AudioContext[] } }
   | { type: 'REMOVE_PLAYING_SOUND'; payload: string }
   | { type: 'CLEAR_PLAYING_SOUNDS' }
   | { type: 'SET_LOADING'; payload: boolean }
@@ -196,6 +248,10 @@ function appReducer(state: AppState, action: Action): AppState {
         monitorAudio: action.payload.monitorAudio,
         soundVolume: action.payload.soundVolume,
         paused: false,
+        gain: action.payload.gain,
+        monitorGain: action.payload.monitorGain,
+        contexts: action.payload.contexts,
+        startedAt: Date.now(),
       });
       return { ...state, playingSounds: newMap };
     }
@@ -890,10 +946,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Set volume: master for output, monitorVolume for monitor (clamp to 0-1)
-      audio.volume = Math.min(1, Math.max(0, sound.volume * state.settings.masterVolume));
+      // Loudness: clip volume x master for the output, x monitor volume for the
+      // monitor. Through a GainNode where the sink allows it (no 100% ceiling);
+      // otherwise the element's volume, clamped, as before.
+      const outGain = sound.volume * state.settings.masterVolume;
+      const monGain = sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume);
+      const contexts: AudioContext[] = [];
+      const routed = await attachGain(audio, state.settings.outputDeviceId, outGain);
+      if (routed) contexts.push(routed.ctx);
+      else audio.volume = Math.min(1, Math.max(0, outGain));
+      let monitorRouted: { ctx: AudioContext; gain: GainNode } | null = null;
       if (monitorAudio) {
-        monitorAudio.volume = Math.min(1, Math.max(0, sound.volume * (state.settings.monitorVolume ?? state.settings.masterVolume)));
+        monitorRouted = await attachGain(monitorAudio, monitorDevice === 'default' ? null : monitorDevice, monGain);
+        if (monitorRouted) contexts.push(monitorRouted.ctx);
+        else monitorAudio.volume = Math.min(1, Math.max(0, monGain));
         monitorAudio.currentTime = sound.trimStart;
       }
 
@@ -916,6 +982,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           monitorAudio.pause();
         }
         URL.revokeObjectURL(url);
+        for (const c of contexts) { c.close().catch(() => {}); }
         dispatch({ type: 'REMOVE_PLAYING_SOUND', payload: sound.id });
       };
 
@@ -924,7 +991,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       dispatch({
         type: 'ADD_PLAYING_SOUND',
-        payload: { id: sound.id, audio, monitorAudio, soundVolume: sound.volume }
+        payload: {
+          id: sound.id, audio, monitorAudio, soundVolume: sound.volume,
+          gain: routed?.gain ?? null, monitorGain: monitorRouted?.gain ?? null, contexts,
+        }
       });
 
       // Play both audio elements
@@ -1011,6 +1081,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         playing.monitorAudio.pause();
         playing.monitorAudio.currentTime = 0;
       }
+      closeContexts(playing);
       dispatch({ type: 'REMOVE_PLAYING_SOUND', payload: soundId });
     }
   }, [state.playingSounds]);
@@ -1023,6 +1094,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         playing.monitorAudio.pause();
         playing.monitorAudio.currentTime = 0;
       }
+      closeContexts(playing);
     });
     dispatch({ type: 'CLEAR_PLAYING_SOUNDS' });
   }, [state.playingSounds]);
@@ -1123,6 +1195,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pauseResumeLastSound();
     });
 
+    // Transport commands from the HTTP API (the Cortex console's Pause / Stop
+    // on ONE clip while several are layered). Without a soundId they act on the
+    // most recently started clip, the same one the hotkey acts on.
+    const unsubscribePlayback = window.electronAPI.onPlaybackControl?.((cmd) => {
+      let id = cmd.soundId ?? null;
+      if (!id) { for (const [k] of state.playingSounds) id = k; }
+      if (!id) return;
+      const playing = state.playingSounds.get(id);
+      if (!playing) return;
+      switch (cmd.action) {
+        case 'pause': pauseSound(id); break;
+        case 'resume': resumeSound(id); break;
+        case 'toggle': playing.paused ? resumeSound(id) : pauseSound(id); break;
+        case 'stop': stopSound(id); break;
+      }
+    }) ?? (() => {});
+
     const unsubscribeSettingsUpdated = window.electronAPI.onSettingsUpdated?.(async () => {
       const settings = await window.electronAPI.getSettings();
       dispatch({ type: 'SET_SETTINGS', payload: settings });
@@ -1133,9 +1222,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubscribeHotkey();
       unsubscribeStopAll();
       unsubscribePauseResume();
+      unsubscribePlayback();
       unsubscribeSettingsUpdated();
     };
-  }, [state.sounds, playSound, stopAllSounds, pauseResumeLastSound]);
+  }, [state.sounds, state.playingSounds, playSound, stopAllSounds, stopSound, pauseSound, resumeSound, pauseResumeLastSound]);
 
   // Settings operations
   const updateSettingsFn = useCallback(async (settings: Partial<Settings>) => {
@@ -1158,12 +1248,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     state.playingSounds.forEach((playing) => {
       try {
-        if (playing.audio && !playing.audio.paused) {
-          playing.audio.volume = Math.min(1, Math.max(0, playing.soundVolume * state.settings.masterVolume));
-        }
-        if (playing.monitorAudio && !playing.monitorAudio.paused) {
-          playing.monitorAudio.volume = Math.min(1, Math.max(0, playing.soundVolume * (state.settings.monitorVolume ?? state.settings.masterVolume)));
-        }
+        const out = playing.soundVolume * state.settings.masterVolume;
+        const mon = playing.soundVolume * (state.settings.monitorVolume ?? state.settings.masterVolume);
+        if (playing.gain) playing.gain.gain.value = clampGain(out);
+        else if (playing.audio) playing.audio.volume = Math.min(1, Math.max(0, out));
+        if (playing.monitorGain) playing.monitorGain.gain.value = clampGain(mon);
+        else if (playing.monitorAudio) playing.monitorAudio.volume = Math.min(1, Math.max(0, mon));
       } catch (e) {
         // Audio element may have been disposed
       }
@@ -1774,6 +1864,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     playingCountRef.current = state.playingSounds.size;
   }, [state.playingSounds]);
+
+  // Playback telemetry for /api/playing: name, position and length of every
+  // clip playing, 4x a second while anything plays and once (empty) when the
+  // last one ends, so a remote transport can show and control it.
+  useEffect(() => {
+    const report = window.electronAPI?.reportPlayback;
+    if (typeof window === 'undefined' || !report) return;
+    const snapshot = () => {
+      const sounds: import('../../shared/types').PlayingSoundInfo[] = [];
+      state.playingSounds.forEach((playing, id) => {
+        const sound = state.sounds.find(s => s.id === id);
+        if (!sound) return;
+        const start = sound.trimStart || 0;
+        const end = sound.trimEnd || playing.audio.duration || sound.duration || 0;
+        sounds.push({
+          id, name: sound.name,
+          position: Math.max(0, playing.audio.currentTime - start),
+          duration: Math.max(0, end - start),
+          paused: playing.paused,
+          startedAt: playing.startedAt,
+        });
+      });
+      report({ sounds, at: Date.now() });
+    };
+    snapshot();
+    if (state.playingSounds.size === 0) return;
+    const t = window.setInterval(snapshot, 250);
+    return () => window.clearInterval(t);
+  }, [state.playingSounds, state.sounds]);
 
   // Telemetry for the chain watch (electron/chain-watch.ts). Sent from refs,
   // never from `state`, for the same stale-closure reason as everything else in

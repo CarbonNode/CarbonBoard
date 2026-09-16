@@ -197,6 +197,13 @@ export function soundIdForClip(clipId: string): string | null {
   return row?.id ?? null;
 }
 
+/** The server clip a local sound mirrors, if it mirrors one (the console keys on this). */
+export function clipIdForSound(soundId: string): string | null {
+  if (!deps) return null;
+  const row = deps.db.prepare('SELECT clipId FROM sounds WHERE id = ?').get(soundId) as { clipId: string | null } | undefined;
+  return row?.clipId ?? null;
+}
+
 /**
  * Resolve a clip id to a local sound, pulling it from the server if this PC has
  * never seen it. Lets the console play a clip that was uploaded seconds ago

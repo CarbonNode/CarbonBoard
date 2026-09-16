@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, desktopCapturer } from 'electron';
 import type { Sound, Settings, Category, SubCategory } from './types';
 import type { MicTelemetry } from './chain-watch';
+import type { PlaybackTelemetry, PlaybackCommand } from './types';
 
 // ============================================================
 // Preload Script - Exposes IPC to Renderer
@@ -139,6 +140,17 @@ const electronAPI = {
     const handler = () => callback();
     ipcRenderer.on('mic:restart', handler);
     return () => ipcRenderer.removeListener('mic:restart', handler);
+  },
+
+  // Playback transport for the HTTP API: the renderer reports what is playing
+  // (name, position, length, paused) and main answers /api/playing from that;
+  // main forwards pause / resume / stop for ONE sound from /api/pause and
+  // /api/stop, which the hotkey channels above cannot express.
+  reportPlayback: (p: PlaybackTelemetry): void => ipcRenderer.send('playback:state', p),
+  onPlaybackControl: (callback: (cmd: PlaybackCommand) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, cmd: PlaybackCommand) => callback(cmd);
+    ipcRenderer.on('playback:control', handler);
+    return () => ipcRenderer.removeListener('playback:control', handler);
   },
 
   // Utility to get file path from dropped File object

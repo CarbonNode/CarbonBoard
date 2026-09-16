@@ -151,3 +151,25 @@ with its volume, mute and a peak meter, plus the endpoint meters and the default
 role. **Do not play clips as a test** — the cable is Discord's microphone, everyone on the
 call hears it. Let his own speech be the signal: a peak on the headset capture session with
 nothing on CABLE Input is the proof.
+
+## Playback transport + loudness over the HTTP API (2026-09-15)
+
+- `GET /api/playing` (also embedded as `playback` in `/api/audio/status`, which is what the
+  Cortex gateway's existing `soundboard.audio_status` RPC reads): every clip playing right
+  now — `id`, `clipId` (the clip-server id, what the console keys its tiles on), `name`,
+  `position`, `duration` (both in trimmed seconds), `paused`, `startedAt` — plus
+  `allowConcurrentPlayback`, `masterVolume`, `monitorVolume`. The renderer reports it over
+  `playback:state` 4x a second while anything plays (`store.tsx`, next to the mic
+  telemetry); a report older than 3 s is answered as empty rather than frozen.
+- `POST /api/pause` and `POST /api/stop` now take an optional body `{ action?: pause|resume|toggle,
+  soundId? | clipId? }` — one clip while several are layered. No body = the old behaviour
+  (toggle the last-started clip / stop everything). Delivered to the renderer as
+  `playback:control`.
+- **Loudness past 100%.** An `<audio>` element caps at 1.0, so `playSound` now routes each
+  clip through its own `AudioContext` + `GainNode` (`attachGain`), `setSinkId` on the
+  context for device routing, and the master/monitor sliders go to **400%**
+  (`clampGain`, ceiling 8 = 2x clip boost x 4x master; past 0 dBFS it clips on purpose).
+  When a sink refuses a context (an older Chromium, or a special id like `communications`)
+  it falls back to the element path, clamped to 100% as before. Contexts are closed when the
+  clip ends or is stopped, so the chain-watch heal (`stopAllSounds`) still releases the
+  cable's shared output stream.

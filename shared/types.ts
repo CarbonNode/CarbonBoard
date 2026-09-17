@@ -199,7 +199,7 @@ export interface ElectronAPI {
   restartCable: () => Promise<{ success: boolean; error?: string }>;
   onSettingsUpdated: (callback: () => void) => () => void;
   reportMicTelemetry?: (t: {
-    passthrough: boolean; level: number; gateOpen: boolean; threshold: number; floor: number; clips: number;
+    passthrough: boolean; level: number; peak?: number; gateOpen: boolean; threshold: number; floor: number; clips: number;
   }) => void;
   onMicRestart?: (callback: () => void) => () => void;
 

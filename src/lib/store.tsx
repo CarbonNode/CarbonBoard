@@ -384,6 +384,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // whether the gate is open and how many clips are playing -- i.e. whether
   // anything SHOULD be on the cable right now. Main meters the cable itself.
   const micLevelRef = useRef<number>(0);
+  const micPeakLevelRef = useRef<number>(0); // max since the last telemetry report
   const micThresholdEffRef = useRef<number>(0);
   const playingCountRef = useRef<number>(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null); // Track current preview audio
@@ -1484,6 +1485,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const rms = Math.sqrt(sum / dataArray.length);
         const level = Math.min(100, Math.round((rms / 128) * 100));
         micLevelRef.current = level;
+        if (level > micPeakLevelRef.current) micPeakLevelRef.current = level;
 
         dispatch({ type: 'SET_MIC_LEVEL', payload: level });
 
@@ -1904,11 +1906,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       report({
         passthrough: micPassthroughActiveRef.current,
         level: micLevelRef.current,
+        peak: micPeakLevelRef.current,
         gateOpen: micGateOpenRef.current,
         threshold: micThresholdEffRef.current,
         floor: micNoiseFloorRef.current,
         clips: playingCountRef.current,
       });
+      micPeakLevelRef.current = 0;
     }, 500);
     return () => window.clearInterval(id);
   }, []);

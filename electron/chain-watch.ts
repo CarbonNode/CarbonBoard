@@ -38,6 +38,8 @@ import { app, WebContents } from 'electron';
 export interface MicTelemetry {
   passthrough: boolean;
   level: number;
+  /** Max level since the previous report (speech is bursty; the instantaneous level misses it). */
+  peak?: number;
   gateOpen: boolean;
   threshold: number;
   floor: number;
@@ -71,6 +73,11 @@ export interface ChainStatus {
   captureSilentForMs: number;
   /** Re-opens made because the capture side was silent. */
   captureHeals: number;
+  /** Windows meter on the microphone the app captures, 0..1; the mic's own truth. */
+  micPeak: number;
+  micMeterAlive: boolean;
+  /** Which side the current dead state is on. */
+  deadWhy: 'output' | 'capture' | null;
 }
 
 /** One line a person can act on, for the tray and its tooltip. */
@@ -97,6 +104,16 @@ const METER_SILENT_MS = 6000;    // no line from the meter for this long = it is
 const CAPTURE_SILENT_MS = 45_000;
 const CAPTURE_HEAL_COOLDOWN_MS = 2 * 60_000;  // re-open at most this often; a re-open of a silent stream is inaudible
 const CAPTURE_TOAST_EVERY_MS = 30 * 60_000;   // remind, but do not nag, while it stays silent (a mic left off is not a fault)
+// The CAPTURE side, judged the same way as the output: by what Windows sees on
+// the microphone endpoint versus what the app's own analyser sees on the stream
+// it opened from that endpoint. 2026-09-17 13:47: the Insta360 endpoint peaked at
+// -17 dBFS while CarbonBoard's stream read 0-3 of 100 -- a re-open did not fix
+// it, a relaunch did. "Exactly 0" above never fired, because a dead Chromium
+// stream still carries a little dither.
+const MIC_LOUD = 0.03;            // ~-30 dBFS on the endpoint meter: someone is speaking into that mic
+const RENDERER_QUIET = 10;        // the analyser reads below this on a dead stream; speech reads 30+
+const CAPTURE_WINDOW_TICKS = 12;  // 6 s of ticks
+const CAPTURE_MIN_LOUD_TICKS = 4; // this many loud-mic ticks in the window, all unheard by the app = dead
 
 const METER_PS = `
 $ErrorActionPreference = 'Continue'
@@ -116,30 +133,44 @@ interface IMeter { int GetPeakValue(out float p); }
 [StructLayout(LayoutKind.Explicit)] struct PV { [FieldOffset(0)] public short vt; [FieldOffset(8)] public IntPtr p; }
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class EE { }
 public static class CableMeter {
-  public static object Open(string want){
-    var e=(IE)(new EE()); IC c; e.EnumAudioEndpoints(0,1,out c); int n; c.GetCount(out n);
+  static string Norm(string s){ if(s==null) return ""; s=s.ToLowerInvariant().Trim(); s=System.Text.RegularExpressions.Regex.Replace(s, @"\\b\\d+-\\s*", ""); return System.Text.RegularExpressions.Regex.Replace(s, @"\\s+", " ").Trim(); }
+  public static object Open(int flow, string want){
+    var e=(IE)(new EE()); IC c; e.EnumAudioEndpoints(flow,1,out c); int n; c.GetCount(out n);
+    string w=Norm(want); object fallback=null;
     for(int i=0;i<n;i++){ ID d; c.Item(i,out d); IP ps; d.OpenPropertyStore(0,out ps);
       PK k=new PK(); k.f=new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"); k.p=14; PV v; ps.GetValue(ref k,out v);
-      string nm=Marshal.PtrToStringUni(v.p);
-      if(nm!=null && nm.IndexOf(want,StringComparison.OrdinalIgnoreCase)>=0){
-        Guid iid=new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"); object o; d.Activate(ref iid,23,IntPtr.Zero,out o); return o; } }
-    return null;
+      string nm=Norm(Marshal.PtrToStringUni(v.p));
+      if(nm.Length==0 || w.Length==0) continue;
+      bool exact = nm==w, loose = nm.IndexOf(w)>=0 || w.IndexOf(nm)>=0;
+      if(exact || (loose && fallback==null)){
+        Guid iid=new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"); object o; d.Activate(ref iid,23,IntPtr.Zero,out o);
+        if(exact) return o; fallback=o; } }
+    return fallback;
   }
   public static float Peak(object o){ float p; ((IMeter)o).GetPeakValue(out p); return p; }
 }
 "@
 $m = $null
+$mic = $null
+$micWant = ''
+$micFile = '__MICFILE__'
 $opened = [datetime]::MinValue
 $inv = [Globalization.CultureInfo]::InvariantCulture
 while ($true) {
   # Re-open every minute regardless: a meter on an endpoint Windows has since
   # re-enumerated keeps returning 0 forever and would read as a dead feed.
-  if ($m -eq $null -or ((Get-Date) - $opened).TotalSeconds -ge 60) {
-    try { $m = [CableMeter]::Open('CABLE Input') } catch { $m = $null }
+  $want = ''
+  try { $want = ([IO.File]::ReadAllText($micFile)).Trim() } catch { }
+  if ($m -eq $null -or $want -ne $micWant -or ((Get-Date) - $opened).TotalSeconds -ge 60) {
+    try { $m = [CableMeter]::Open(0, 'CABLE Input') } catch { $m = $null }
+    $micWant = $want
+    if ($want.Length -gt 0) { try { $mic = [CableMeter]::Open(1, $want) } catch { $mic = $null } } else { $mic = $null }
     $opened = Get-Date
   }
-  if ($m -eq $null) { [Console]::Out.WriteLine('p=nf') }
-  else { try { [Console]::Out.WriteLine('p=' + [CableMeter]::Peak($m).ToString($inv)) } catch { $m = $null; [Console]::Out.WriteLine('p=err') } }
+  $mp = 'nf'
+  if ($mic -ne $null) { try { $mp = [CableMeter]::Peak($mic).ToString($inv) } catch { $mic = $null; $mp = 'err' } }
+  if ($m -eq $null) { [Console]::Out.WriteLine('p=nf m=' + $mp) }
+  else { try { [Console]::Out.WriteLine('p=' + [CableMeter]::Peak($m).ToString($inv) + ' m=' + $mp) } catch { $m = $null; [Console]::Out.WriteLine('p=err m=' + $mp) } }
   [Console]::Out.Flush()
   Start-Sleep -Milliseconds 200
 }
@@ -166,6 +197,13 @@ export class ChainWatch {
   private telAt = 0;
   private expectingSince = 0;
 
+  private micPeak = 0;
+  private micLineAt = 0;
+  private micWritten: string | null = null;
+  private readonly micFile: string;
+  private capWindow: { micLoud: boolean; heard: boolean }[] = [];
+  private deadWhy: 'output' | 'capture' | null = null;
+
   private captureSilentSince = 0;
   private captureSilentJudged = false;
   private captureHeals = 0;
@@ -187,10 +225,23 @@ export class ChainWatch {
   constructor(dataDir: string) {
     this.logFile = path.join(dataDir, 'chain.log');
     this.relaunchStamp = path.join(dataDir, 'chain.relaunch');
+    this.micFile = path.join(dataDir, 'chain.mic');
+  }
+
+  /** Tell the meter which microphone to watch (the profile's capture mic, by label). */
+  private syncMicFile(): void {
+    const label = this.hooks?.captureMic() ?? '';
+    if (label === this.micWritten) return;
+    try {
+      fs.writeFileSync(this.micFile, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(label, 'utf8')]));
+      this.micWritten = label;
+      this.log(`meter   watching microphone "${label || '(none)'}"`);
+    } catch { /* next tick */ }
   }
 
   start(hooks: ChainHooks): void {
     this.hooks = hooks;
+    this.syncMicFile();
     this.spawnMeter();
     this.timer = setInterval(() => this.tick(), 500);
     this.log('start   watching CABLE Input by meter');
@@ -238,6 +289,9 @@ export class ChainWatch {
       relaunches: this.relaunches,
       captureSilentForMs: this.captureSilentSince ? now - this.captureSilentSince : 0,
       captureHeals: this.captureHeals,
+      micPeak: this.micPeak,
+      micMeterAlive: this.micLineAt > 0 && now - this.micLineAt < METER_SILENT_MS,
+      deadWhy: this.deadSince ? this.deadWhy : null,
     };
   }
 
@@ -253,7 +307,9 @@ export class ChainWatch {
       return { state: 'off', title: 'Mic feed OFF', detail: 'The passthrough is switched off, so Discord hears nothing.' };
     }
     if (st.stuckForMs > 0) {
-      return { state: 'dead', title: `Mic feed DEAD for ${secs(st.stuckForMs)}`, detail: `You are speaking but nothing reaches the cable (heals: ${st.deadEvents}).` };
+      return st.deadWhy === 'capture'
+        ? { state: 'dead', title: `Mic DEAD for ${secs(st.stuckForMs)} - app hears nothing`, detail: `${mic} has sound on it but the app's stream is silent. Re-opening; then a relaunch.` }
+        : { state: 'dead', title: `Mic feed DEAD for ${secs(st.stuckForMs)}`, detail: `You are speaking but nothing reaches the cable (heals: ${st.deadEvents}).` };
     }
     if (st.captureSilentForMs >= CAPTURE_SILENT_MS) {
       return { state: 'silent', title: `Mic silent for ${secs(st.captureSilentForMs)}`, detail: `${mic} is delivering nothing at all. Off, unplugged, or a dead stream.` };
@@ -282,38 +338,34 @@ export class ChainWatch {
       this.log('meter   stopped reporting, respawning it');
       this.spawnMeter();
     }
+    this.syncMicFile();
 
     const fresh = !!this.tel && now - this.telAt < 3000;
-    this.judgeCapture(now, fresh);
+    this.judgeSilence(now, fresh);
 
-    const expecting = fresh && this.expects(this.tel!);
-    if (!expecting) {
-      this.expectingSince = 0;
-      // Signal seen while nothing was expected is fine (Discord's own test, a
-      // browser tab); it just proves the cable alive.
-      if (this.deadSince && now - this.lastSignalAt < DEAD_AFTER_MS) this.recovered('signal returned');
+    const out = this.judgeOutput(now, fresh);
+    const cap = this.judgeCapture(now, fresh);
+
+    if (out !== 'dead' && cap !== 'dead') {
+      if (this.deadSince) {
+        const back = this.deadWhy === 'capture'
+          ? cap === 'alive'
+          : out === 'alive' || now - this.lastSignalAt < DEAD_AFTER_MS;
+        if (back) this.recovered(this.deadWhy === 'capture' ? 'the app hears the microphone again' : 'signal returned');
+      }
       return;
     }
-    if (!this.expectingSince) this.expectingSince = now;
 
-    if (!this.meterAlive(now)) return; // cannot judge blind; never heal on no evidence
-
-    const silentFor = this.lastSignalAt ? now - this.lastSignalAt : now - this.expectingSince;
-    const expectingFor = now - this.expectingSince;
-    const alive = silentFor < DEAD_AFTER_MS;
-
-    if (alive) {
-      if (this.deadSince) this.recovered('signal returned');
-      return;
-    }
-    if (expectingFor < DEAD_AFTER_MS) return;
-
-    // Dead: something should be on the cable and has not been for DEAD_AFTER_MS.
+    // Dead on one side or the other. Same escalation for both: re-open, then relaunch.
+    const why: 'output' | 'capture' = cap === 'dead' ? 'capture' : 'output';
     if (!this.deadSince) {
       this.deadSince = now;
+      this.deadWhy = why;
       this.deadEvents++;
       this.lastDeadAt = new Date(now).toISOString();
-      this.log(`DEAD    ${this.describe()} -- cable silent ${Math.round(silentFor / 1000)}s while signal expected`);
+      this.log(why === 'capture'
+        ? `DEAD    capture -- mic endpoint peak=${this.micPeak.toFixed(3)} while the app's stream reads ${this.tel?.peak ?? this.tel?.level ?? '?'}; ${this.describe()}`
+        : `DEAD    output -- ${this.describe()} -- cable silent ${Math.round((now - (this.lastSignalAt || this.expectingSince)) / 1000)}s while signal expected`);
     }
     if (now - this.lastHealAt < HEAL_COOLDOWN_MS) return;
 
@@ -323,8 +375,41 @@ export class ChainWatch {
       return;
     }
     this.strikes.push(now);
-    this.hooks?.toast('Mic feed died - re-opening', this.hooks.captureMic());
-    this.heal(`dead #${this.deadEvents}, strike ${this.strikes.length}/${STRIKES_TO_RELAUNCH}`);
+    this.hooks?.toast(why === 'capture' ? 'Mic dead - app hears nothing, re-opening' : 'Mic feed died - re-opening', this.hooks.captureMic());
+    this.heal(`${why} dead #${this.deadEvents}, strike ${this.strikes.length}/${STRIKES_TO_RELAUNCH}`);
+  }
+
+  /** The output side: signal expected (gate open / clip) and none on the cable. */
+  private judgeOutput(now: number, fresh: boolean): 'dead' | 'alive' | 'unknown' {
+    const expecting = fresh && this.expects(this.tel!);
+    if (!expecting) { this.expectingSince = 0; return 'unknown'; }
+    if (!this.expectingSince) this.expectingSince = now;
+    if (!this.meterAlive(now)) return 'unknown'; // cannot judge blind; never heal on no evidence
+    const silentFor = this.lastSignalAt ? now - this.lastSignalAt : now - this.expectingSince;
+    if (silentFor < DEAD_AFTER_MS) return 'alive';
+    if (now - this.expectingSince < DEAD_AFTER_MS) return 'unknown';
+    return 'dead';
+  }
+
+  /**
+   * The capture side, by signal: Windows' meter on the microphone endpoint says
+   * someone is speaking into it; the app's analyser on the stream it opened from
+   * that very endpoint says nothing. Several such moments in a row, none heard,
+   * is a dead capture stream (2026-09-17 13:47). Judged only on ticks where the
+   * mic is actually loud, so silence and a mic that is switched off are simply
+   * "unknown", never dead.
+   */
+  private judgeCapture(now: number, fresh: boolean): 'dead' | 'alive' | 'unknown' {
+    const t = this.tel;
+    const micFresh = this.micLineAt > 0 && now - this.micLineAt < METER_SILENT_MS;
+    if (!fresh || !t || !t.passthrough || !micFresh) { this.capWindow = []; return 'unknown'; }
+    const heardLevel = t.peak ?? t.level;
+    this.capWindow.push({ micLoud: this.micPeak > MIC_LOUD, heard: heardLevel >= RENDERER_QUIET });
+    if (this.capWindow.length > CAPTURE_WINDOW_TICKS) this.capWindow.shift();
+    if (this.capWindow.some(w => w.heard)) return 'alive';
+    const loud = this.capWindow.filter(w => w.micLoud).length;
+    if (loud >= CAPTURE_MIN_LOUD_TICKS) return 'dead';
+    return 'unknown';
   }
 
   /**
@@ -334,7 +419,7 @@ export class ChainWatch {
    * as the output side, but never counts towards a relaunch: a microphone that
    * is switched off looks identical, and restarting the app will not turn it on.
    */
-  private judgeCapture(now: number, fresh: boolean): void {
+  private judgeSilence(now: number, fresh: boolean): void {
     const t = this.tel;
     if (!fresh || !t || !t.passthrough) {
       // Nothing to judge (window gone, or the passthrough is off -- including the
@@ -374,6 +459,7 @@ export class ChainWatch {
   private recovered(why: string): void {
     const ms = Date.now() - this.deadSince;
     this.deadSince = 0;
+    this.deadWhy = null;
     this.log(`healed  ${why} after ${Math.round(ms / 1000)}s`);
     this.hooks?.toast('Mic feed is back', this.hooks.captureMic());
   }
@@ -417,7 +503,7 @@ export class ChainWatch {
       child = spawn(
         'powershell.exe',
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass',
-          '-EncodedCommand', Buffer.from(METER_PS, 'utf16le').toString('base64')],
+          '-EncodedCommand', Buffer.from(METER_PS.replace('__MICFILE__', this.micFile.replace(/'/g, "''")), 'utf16le').toString('base64')],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
       );
     } catch (err) {
@@ -449,7 +535,13 @@ export class ChainWatch {
   private onMeterLine(line: string): void {
     if (!line.startsWith('p=')) return;
     this.lastLineAt = Date.now();
-    const v = line.slice(2);
+    const mm = / m=(\S+)/.exec(line);
+    if (mm) {
+      const mv = Number(mm[1]);
+      if (Number.isFinite(mv)) { this.micPeak = mv; this.micLineAt = this.lastLineAt; }
+      else { this.micPeak = 0; this.micLineAt = 0; } // nf/err: no microphone to read; the capture judge stays blind
+    }
+    const v = line.split(' ')[0].slice(2);
     if (v === 'nf' || v === 'err') {
       // CABLE Input is not there (driver restart, mid re-enumeration). Say so
       // once per streak; the judge already refuses to act without a live meter.

@@ -286,6 +286,14 @@ public static class Audio {
     Marshal.FreeHGlobal(p);
     return hr2;
   }
+  public static string[] ListNames(bool capture) {
+    var e = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+    IMMDeviceCollection col; e.EnumAudioEndpoints(capture ? CAPTURE : RENDER, ACTIVE, out col);
+    int n; col.GetCount(out n);
+    var names = new System.Collections.Generic.List<string>();
+    for (int i = 0; i < n; i++) { IMMDevice d; col.Item(i, out d); string nm = NameOf(d); if (nm != null) names.Add(nm); }
+    return names.ToArray();
+  }
   public static bool SetDefault(string id) {
     if (id == null) return false;
     var pc = (IPolicyConfig)(new CPolicyConfigClient());
@@ -319,7 +327,7 @@ async function ps<T>(body: string, timeoutMs = 15_000): Promise<T> {
 }
 
 /** Same normalisation as the C# side, for matching a profile to what's live. */
-function sameDevice(a: string | null, b: string | null): boolean {
+export function sameDevice(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
   // Same rule as the C# side: Windows' duplicate-endpoint counter can sit
   // anywhere in the name ("Headset Microphone (3- Astro A50 Voice)").
@@ -510,14 +518,40 @@ if ($outRate -gt 0 -and $outRate -ne ${rate}) { [void][Audio]::SetFormat($true, 
   }
 }
 
-/** Every active endpoint, for troubleshooting a profile that won't take. */
+/**
+ * Every ACTIVE endpoint by friendly name, capture and render. The tray's device
+ * submenus are built from this, so it has to be the real list — until 2026-09-17
+ * it returned only the two defaults, which was fine for the API nobody read and
+ * useless for a menu.
+ */
 export async function listDevices(): Promise<{ inputs: string[]; outputs: string[] }> {
-  return await ps<{ inputs: string[]; outputs: string[] }>(`
-Add-Type -AssemblyName System.Core
-$ins = @(); $outs = @()
-@{ inputs = @([Audio]::DefaultName($true)); outputs = @([Audio]::DefaultName($false)) } | ConvertTo-Json -Compress
-`);
+  const asList = (x: unknown): string[] => Array.isArray(x) ? x.map(String) : x == null ? [] : [String(x)];
+  const r = await ps<{ inputs: unknown; outputs: unknown }>(`
+@{ inputs = @([Audio]::ListNames($true)); outputs = @([Audio]::ListNames($false)) } | ConvertTo-Json -Compress
+`, 20_000);
+  return { inputs: asList(r.inputs), outputs: asList(r.outputs) };
 }
+
+/**
+ * Make a playback device the Windows default (all three roles), by name. What a
+ * profile switch does for its output half; exposed on its own so the tray can
+ * offer a device no profile names. The device watch below notices the change
+ * and adopts a profile if one matches, exactly as for a Stream Deck key.
+ */
+export async function setDefaultOutput(name: string): Promise<boolean> {
+  const q = `'${name.replace(/'/g, "''")}'`;
+  const r = await ps<{ ok: boolean }>(`
+$id = [Audio]::FindId($false, ${q})
+if ($id) { [void][Audio]::SetDefault($id); @{ ok = $true } | ConvertTo-Json -Compress }
+else { @{ ok = $false } | ConvertTo-Json -Compress }
+`, 20_000);
+  if (r.ok) lastOutput = name;
+  return r.ok;
+}
+
+/** The default playback device as last seen by the watch below (no PowerShell call). */
+export function getLastOutput(): string | null { return lastOutput; }
+let lastOutput: string | null = null;
 
 // ── noticing a switch we did not make ────────────────────────────────────────
 
@@ -548,6 +582,7 @@ export function startDeviceWatch(
       const cur = await ps<{ out: string | null }>(
         `@{ out = [Audio]::DefaultName($false) } | ConvertTo-Json -Compress`, 12_000);
       const out = cur.out ?? null;
+      if (out) lastOutput = out;
       if (out && last && out !== last) {
         const hit = readProfiles().find(p => p.output && sameDevice(p.output, out));
         // Only when it lands somewhere we have a name for. A device with no

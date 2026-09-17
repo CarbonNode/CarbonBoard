@@ -123,7 +123,7 @@ $chain       = $status.chain
 $chainNote = ''
 $stuck = $false
 if ($chain) {
-  $chainNote = ('  cable={0} dead={1} relaunches={2}' -f $(if ($chain.meterAlive) { 'metered' } else { 'NO-METER' }), $chain.deadEvents, $chain.relaunches)
+  $chainNote = ('  cable={0} dead={1} relaunches={2} capture={3}' -f $(if ($chain.meterAlive) { 'metered' } else { 'NO-METER' }), $chain.deadEvents, $chain.relaunches, $(if ($chain.captureSilentForMs -gt 0) { ('SILENT-{0}s' -f [int]($chain.captureSilentForMs / 1000)) } else { 'signal' }))
   if ($chain.stuckForMs -gt 90000) {
     Write-Log ("STUCK   profile={0}  feed dead for {1}s despite the app's own heals{2}" -f $profileName, [int]($chain.stuckForMs / 1000), $chainNote)
     $stuck = $true

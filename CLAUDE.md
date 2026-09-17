@@ -188,3 +188,43 @@ dead" at 09:40:37 and then did nothing; `_watchdog.ps1` (logon trigger, repeat 2
   before it will pop a message box.
 - `CarbonBoardWatchdog` task: logon trigger with a 30 s delay, repeating every 1 min (was no delay,
   2 min); `_watchdog.ps1` logs every run (`ok pid=… since …` / `restarted`).
+
+### The tray icon is the mic's control panel (2026-09-17)
+
+`electron/tray.ts`. Left- or right-click the CarbonBoard icon in the notification area
+(bottom-right of Windows) for the mic feed's controls, built fresh on every open from
+in-memory caches so it pops instantly:
+
+- **Header** — the chain's verdict (`ChainWatch.verdict()`): `● Mic feed OK - <mic>`,
+  `✕ Mic feed DEAD for Ns`, `✕ Mic silent for Ns`, `✕ Mic feed: no word from the app
+  window`, `○ Mic feed OFF`. The same verdict paints a **dot on the icon** (red = dead or
+  silent, amber = blind or muted, none = fine) and the tooltip, refreshed every 2 s, so a
+  dead feed is visible before anyone on the call has to say so.
+- **Restart mic feed** = `chain.heal('tray')`: the same re-open the watch does on its own.
+- **Re-pin cable as the Windows mic** = `ensureCablePinned` + `ensureCableFormat`.
+- **Profile ▸** radio list from `audio-profiles.json` → `applyProfile` (+ toast).
+- **Microphone ▸** every active capture endpoint except the cable → `setCaptureMic(label)`;
+  the renderer follows the label and re-opens the stream. **Headphones / speakers ▸** every
+  active render endpoint except CABLE Input → `setDefaultOutput`; the device watch then
+  adopts a matching profile as if a Stream Deck key had done it. Lists come from
+  `audioRig.listDevices()` (now a real `ListNames` enumeration, refreshed every 30 s in the
+  background; "Refresh list" forces it).
+- **Mute mic** (checkbox) flips `micPassthroughEnabled`. Then Show / Stop all / Open logs
+  folder / **Restart CarbonBoard** (`app.relaunch`) / Quit.
+
+### The capture side can die too, and nothing judged it (2026-09-17)
+
+The mic sat dead from 2026-09-16 12:47 to 2026-09-17 13:18 — no gate open in `renderer.log`
+for 24 hours, `micwatch` "ok" every five minutes, `chain.log` empty — because the chain watch
+only judged the OUTPUT: signal expected (gate open or a clip) and none on the cable. A capture
+stream that delivers exactly zero never opens the gate, so nothing was ever "expected" and the
+feed read healthy. A profile flip (which re-opens the passthrough) fixed it by hand.
+
+`judgeCapture()` in `chain-watch.ts` closes that: with the passthrough on, the renderer's own
+level meter reading **exactly 0 for 45 s** is a capture carrying nothing (a live mic on this rig
+never reads below 5 even between words). It re-opens the passthrough at most every 2 min,
+toasts once and then at most every 30 min while it persists (a mic switched off looks the same
+and is not a fault), announces "Mic is live again" when signal returns, and **never counts
+towards a relaunch**. `chain.log` lines: `SILENT  capture reads 0 for Ns …`, `capture signal
+back after Ns`. `/api/audio/status` → `chain.captureSilentForMs` / `captureHeals`; `micwatch`
+logs `capture=signal|SILENT-Ns` on every run.

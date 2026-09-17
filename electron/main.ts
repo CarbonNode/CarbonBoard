@@ -4,10 +4,6 @@ import {
   ipcMain,
   dialog,
   globalShortcut,
-  Tray,
-  Menu,
-  nativeImage,
-  NativeImage,
   shell,
   protocol,
   net,
@@ -22,6 +18,7 @@ import type { PlaybackTelemetry, PlaybackCommand } from './types';
 import * as audioRig from './audio-rig';
 import { showAudioToast } from './toast';
 import { ChainWatch, wireRendererLog, type MicTelemetry } from './chain-watch';
+import { createTray as createFeedTray } from './tray';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
@@ -706,56 +703,20 @@ function registerAllHotkeys(): void {
 // ============================================================
 
 let mainWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
-
+// The tray lives in tray.ts: the mic feed's controls (restart, mic, profile,
+// output, mute) plus a health dot painted from the chain watch's verdict.
 function createTray(): void {
-  // Use ICO for Windows tray - looks for icon.ico in root
-  const iconPath = isDev
-    ? path.join(__dirname, '../icon.ico')
-    : path.join(app.getAppPath(), 'icon.ico');
-
-  // Create a simple tray icon if file doesn't exist
-  let trayIcon: NativeImage;
-  if (fs.existsSync(iconPath)) {
-    trayIcon = nativeImage.createFromPath(iconPath);
-  } else {
-    // Create a simple 16x16 icon
-    trayIcon = nativeImage.createEmpty();
-  }
-
-  tray = new Tray(trayIcon.isEmpty() ? nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAOxAAADsQBlSsOGwAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAEJSURBVDiNpZMxTsNAEEXfLLYQDRKiQpQUSJT0NNDSIQrOAAUH4AacgQNQcISInoYOJQUNEogECRBIgPDibLLOrrMLIzma8b75f8YzawA2RA+4BW6AHnAOvAOPwA0wBH6BcwPUgS5QAZ6BiTxvAC3gDFgF3oA2cABsgAMgAY7lOQLWgCdgO4VeBZ6BI+AWqAGLwBVwCEzL8ywQAt/AhYBvgA4QyXME7AMvwFaCLACbwK28L4nPZiTvEeAIeJVnNzjAPbAnxhbQBDbEaQJ3xWE8/AdQB8I/8F9hMG7gD5yJ02LCdSnvMvCZ/HgOvAfUgD/g3P8Z/gE4lgKPSoFz4E3G2wbOgO8/0L8BSR8oKfGy4j8AAAAASUVORK5CYII='
-  ) : trayIcon);
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show CarbonBoard',
-      click: () => {
-        mainWindow?.show();
-        mainWindow?.focus();
-      },
-    },
-    {
-      label: 'Stop All Sounds',
-      click: () => {
-        mainWindow?.webContents.send('hotkey:stopAll');
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        app.quit();
-      },
-    },
-  ]);
-
-  tray.setToolTip('CarbonBoard');
-  tray.setContextMenu(contextMenu);
-
-  tray.on('double-click', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
+  createFeedTray({
+    iconPath: isDev ? path.join(__dirname, '../icon.ico') : path.join(app.getAppPath(), 'icon.ico'),
+    dataDir: APP_DATA_PATH,
+    chain,
+    audioRig,
+    window: () => mainWindow,
+    getSettings,
+    updateSettings,
+    toast: showAudioToast,
+    settingsChanged: () => mainWindow?.webContents.send('settings:updated'),
+    quit: () => app.quit(),
   });
 }
 

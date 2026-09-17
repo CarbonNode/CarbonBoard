@@ -67,6 +67,17 @@ export interface ChainStatus {
   lastDeadAt: string | null;
   lastHealAt: string | null;
   relaunches: number;
+  /** ms the capture has read exactly 0 with the passthrough on; 0 = it carries signal. */
+  captureSilentForMs: number;
+  /** Re-opens made because the capture side was silent. */
+  captureHeals: number;
+}
+
+/** One line a person can act on, for the tray and its tooltip. */
+export interface ChainVerdict {
+  state: 'ok' | 'dead' | 'silent' | 'blind' | 'off';
+  title: string;
+  detail: string;
 }
 
 const SIGNAL_FLOOR = 0.001;      // ~-60 dBFS: a peak meter reads this on real audio, never on a dead stream
@@ -76,6 +87,16 @@ const STRIKES_TO_RELAUNCH = 3;   // heals that failed inside STRIKE_WINDOW_MS be
 const STRIKE_WINDOW_MS = 10 * 60_000;
 const RELAUNCH_COOLDOWN_MS = 30 * 60_000;
 const METER_SILENT_MS = 6000;    // no line from the meter for this long = it is dead, respawn it
+// The CAPTURE side. A live microphone never reads exactly 0 on the analyser: the
+// observed floor on this rig is 5-9 even between words (renderer.log). Exactly 0
+// for this long, with the passthrough on, is a capture stream that carries
+// nothing -- a dead stream below JavaScript, a receiver whose transmitter is off,
+// or a device that went away without ending its track. The gate can never open on
+// it, so the output-side judge above is blind to it: that is how the mic sat dead
+// from 2026-09-16 12:47 to 2026-09-17 13:18 with every check green.
+const CAPTURE_SILENT_MS = 45_000;
+const CAPTURE_HEAL_COOLDOWN_MS = 2 * 60_000;  // re-open at most this often; a re-open of a silent stream is inaudible
+const CAPTURE_TOAST_EVERY_MS = 30 * 60_000;   // remind, but do not nag, while it stays silent (a mic left off is not a fault)
 
 const METER_PS = `
 $ErrorActionPreference = 'Continue'
@@ -145,6 +166,12 @@ export class ChainWatch {
   private telAt = 0;
   private expectingSince = 0;
 
+  private captureSilentSince = 0;
+  private captureSilentJudged = false;
+  private captureHeals = 0;
+  private lastCaptureHealAt = 0;
+  private lastCaptureToastAt = 0;
+
   private deadSince = 0;
   private deadEvents = 0;
   private lastDeadAt: string | null = null;
@@ -209,7 +236,33 @@ export class ChainWatch {
       lastDeadAt: this.lastDeadAt,
       lastHealAt: this.lastHealAt ? new Date(this.lastHealAt).toISOString() : null,
       relaunches: this.relaunches,
+      captureSilentForMs: this.captureSilentSince ? now - this.captureSilentSince : 0,
+      captureHeals: this.captureHeals,
     };
+  }
+
+  /** What the tray shows: the worst thing that is true right now. */
+  verdict(): ChainVerdict {
+    const st = this.status();
+    const mic = this.hooks?.captureMic() ?? 'microphone';
+    const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+    if (st.telemetryAgoMs === null || st.telemetryAgoMs > 5000) {
+      return { state: 'blind', title: 'Mic feed: no word from the app window', detail: 'The soundboard window is not reporting. Restart CarbonBoard.' };
+    }
+    if (this.tel && !this.tel.passthrough) {
+      return { state: 'off', title: 'Mic feed OFF', detail: 'The passthrough is switched off, so Discord hears nothing.' };
+    }
+    if (st.stuckForMs > 0) {
+      return { state: 'dead', title: `Mic feed DEAD for ${secs(st.stuckForMs)}`, detail: `You are speaking but nothing reaches the cable (heals: ${st.deadEvents}).` };
+    }
+    if (st.captureSilentForMs >= CAPTURE_SILENT_MS) {
+      return { state: 'silent', title: `Mic silent for ${secs(st.captureSilentForMs)}`, detail: `${mic} is delivering nothing at all. Off, unplugged, or a dead stream.` };
+    }
+    if (!st.meterAlive) {
+      return { state: 'blind', title: 'Mic feed: cable meter down', detail: 'Cannot see the cable; re-opening the meter.' };
+    }
+    const sig = st.cableSignalAgoMs === null ? 'never' : `${secs(st.cableSignalAgoMs)} ago`;
+    return { state: 'ok', title: `Mic feed OK - ${mic}`, detail: `Cable last carried audio ${sig} - level ${st.level}, gate ${st.gateOpen ? 'open' : 'closed'}.` };
   }
 
   // ── the judge ──────────────────────────────────────────────────────────────
@@ -231,6 +284,8 @@ export class ChainWatch {
     }
 
     const fresh = !!this.tel && now - this.telAt < 3000;
+    this.judgeCapture(now, fresh);
+
     const expecting = fresh && this.expects(this.tel!);
     if (!expecting) {
       this.expectingSince = 0;
@@ -270,6 +325,50 @@ export class ChainWatch {
     this.strikes.push(now);
     this.hooks?.toast('Mic feed died - re-opening', this.hooks.captureMic());
     this.heal(`dead #${this.deadEvents}, strike ${this.strikes.length}/${STRIKES_TO_RELAUNCH}`);
+  }
+
+  /**
+   * The capture side: is the microphone delivering ANYTHING? Judged by the
+   * renderer's own level meter reading exactly zero, so it needs no Windows
+   * meter and works whether or not anyone is speaking. Heals by the same re-open
+   * as the output side, but never counts towards a relaunch: a microphone that
+   * is switched off looks identical, and restarting the app will not turn it on.
+   */
+  private judgeCapture(now: number, fresh: boolean): void {
+    const t = this.tel;
+    if (!fresh || !t || !t.passthrough) {
+      // Nothing to judge (window gone, or the passthrough is off -- including the
+      // ~1 s it is off during our own re-open). The clock restarts; the "judged"
+      // flag stays, so a re-open that WORKS is announced when signal appears.
+      this.captureSilentSince = 0;
+      return;
+    }
+    if (t.level > 0) {
+      if (this.captureSilentJudged) {
+        this.log(`capture signal back after ${Math.round((now - this.captureSilentSince) / 1000)}s of silence`);
+        this.hooks?.toast('Mic is live again', this.hooks.captureMic());
+      }
+      this.captureSilentSince = 0;
+      this.captureSilentJudged = false;
+      return;
+    }
+    if (!this.captureSilentSince) this.captureSilentSince = now;
+    const silentFor = now - this.captureSilentSince;
+    if (silentFor < CAPTURE_SILENT_MS) return;
+
+    if (!this.captureSilentJudged) {
+      this.captureSilentJudged = true;
+      this.log(`SILENT  capture reads 0 for ${Math.round(silentFor / 1000)}s -- ${this.describe()}; re-opening the microphone`);
+    }
+    if (now - this.lastCaptureToastAt > CAPTURE_TOAST_EVERY_MS) {
+      this.lastCaptureToastAt = now;
+      this.hooks?.toast('Mic is silent - re-opening it', this.hooks.captureMic());
+    }
+    if (now - this.lastCaptureHealAt < CAPTURE_HEAL_COOLDOWN_MS) return;
+    this.lastCaptureHealAt = now;
+    this.lastHealAt = now;
+    this.captureHeals++;
+    this.heal(`capture silent ${Math.round(silentFor / 1000)}s (#${this.captureHeals})`);
   }
 
   private recovered(why: string): void {

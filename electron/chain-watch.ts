@@ -324,7 +324,12 @@ export class ChainWatch {
   // ── the judge ──────────────────────────────────────────────────────────────
 
   private expects(t: MicTelemetry): boolean {
-    return t.passthrough && (t.gateOpen || t.clips > 0);
+    // An open gate only means signal is expected if the analyser actually has
+    // some: with a low manual threshold the gate sits open through silence, and
+    // a microphone that is switched off would otherwise read as a dead OUTPUT and
+    // walk the app into a relaunch it cannot fix (2026-09-17).
+    const speaking = t.gateOpen && (t.peak ?? t.level) >= RENDERER_QUIET;
+    return t.passthrough && (speaking || t.clips > 0);
   }
 
   private meterAlive(now: number): boolean {

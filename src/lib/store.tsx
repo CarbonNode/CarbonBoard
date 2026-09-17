@@ -1430,10 +1430,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       gainNode.connect(gateGain);
       gateGain.connect(destination);
 
-      // Initialize refs
-      micNoiseGateThresholdRef.current = state.settings.micNoiseGate ?? 0;
-      micNoiseGateAutoRef.current = state.settings.micNoiseGateAuto ?? true;
-      micNoiseFloorRef.current = 30; // Start with conservative estimate (will adapt)
+      // Initialize refs -- from the LIVE settings. `state.settings` here is the
+      // closure captured when this callback was created, so every re-open used
+      // to reset the gate to whatever the settings were at app start (2026-09-17:
+      // the API switched the gate to manual, and the next re-open switched it
+      // straight back to auto).
+      micNoiseGateThresholdRef.current = live.micNoiseGate ?? 0;
+      micNoiseGateAutoRef.current = live.micNoiseGateAuto ?? true;
+      micNoiseFloorRef.current = 8; // start low: a gate that opens on noise for a second beats one that cannot open
       micNoiseFloorSamplesRef.current = [];
       micGateOpenRef.current = false;
       micGateBelowSinceRef.current = 0;
@@ -1443,12 +1447,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Start level monitoring
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       const NOISE_FLOOR_SAMPLE_COUNT = 40; // ~2 seconds of samples at 50ms interval
-      const AUTO_THRESHOLD_MARGIN = 25; // Add this % above noise floor (was 15, increased for noisy environments)
+      const AUTO_THRESHOLD_MARGIN = 15; // above the noise floor. Was 25: with the floor capped at 25 that put the threshold at 50 while speech on this rig reads 28-45, so the gate could not open (2026-09-17)
       const GATE_HOLD_MS = 400;     // stay open this long after the level drops, so the gaps between words do not close it
       const GATE_ATTACK_S = 0.005;  // open fast: the first consonant is the one that gets lost
       const GATE_RELEASE_S = 0.06;  // close gently: a 10 ms cut is an audible click on the far end
       const FLOOR_SETTLE_MS = 600;  // sample the noise floor only once the gate has been closed this long
-      const FLOOR_CAP = 25;         // the auto threshold never exceeds FLOOR_CAP + margin: a gate that cannot open is worse than one that lets noise through
+      const FLOOR_CAP = 10;         // the auto threshold never exceeds FLOOR_CAP + margin (= 25): a gate that cannot open is worse than one that lets noise through
 
       const updateLevel = () => {
         if (!micAnalyserRef.current) return;
@@ -1504,11 +1508,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (micNoiseFloorSamplesRef.current.length > NOISE_FLOOR_SAMPLE_COUNT) {
               micNoiseFloorSamplesRef.current.shift();
             }
-            // Calculate noise floor as the average of samples
+            // The floor is the 20th percentile of the closed-gate samples, not the
+            // mean. The mean included every quiet word that failed to open the
+            // gate, so sub-threshold speech raised the floor, which raised the
+            // threshold, which kept the next word sub-threshold: a ratchet that
+            // ended with the gate locked shut (2026-09-17, thr=46 vs speech 28-45).
+            // The gaps between words are always in the bottom fifth.
             if (micNoiseFloorSamplesRef.current.length >= 10) {
-              const avgNoise = micNoiseFloorSamplesRef.current.reduce((a, b) => a + b, 0)
-                / micNoiseFloorSamplesRef.current.length;
-              micNoiseFloorRef.current = Math.min(FLOOR_CAP, Math.max(5, Math.round(avgNoise)));
+              const sorted = [...micNoiseFloorSamplesRef.current].sort((a, b) => a - b);
+              const p20 = sorted[Math.floor(sorted.length * 0.2)];
+              micNoiseFloorRef.current = Math.min(FLOOR_CAP, Math.max(3, Math.round(p20)));
             }
           }
 

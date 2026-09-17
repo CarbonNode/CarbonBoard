@@ -228,3 +228,32 @@ and is not a fault), announces "Mic is live again" when signal returns, and **ne
 towards a relaunch**. `chain.log` lines: `SILENT  capture reads 0 for Ns …`, `capture signal
 back after Ns`. `/api/audio/status` → `chain.captureSilentForMs` / `captureHeals`; `micwatch`
 logs `capture=signal|SILENT-Ns` on every run.
+
+### The capture side, judged by signal too (2026-09-17, later the same day)
+
+The exact-zero rule above did not catch the next one. 13:47: `_who3` showed the Insta360
+endpoint peaking at -17 dBFS with CarbonBoard its only session, while CarbonBoard's analyser
+read 0-3 of 100 and CABLE Input carried nothing. A dead Chromium capture stream still has a
+little dither, so it never reads exactly 0. `mic:restart` (a re-open) did not fix it; killing
+and relaunching the app did — same class as the 09-15 output death, one layer over.
+
+So the capture side is now judged the way the output side is, by **signal against signal**:
+
+- The resident meter reads TWO endpoints: CABLE Input (render) and the profile's capture mic
+  (capture, by label from `carbonboard-data/chain.mic`, which `syncMicFile()` rewrites when the
+  profile's mic changes; the meter re-opens on a change and every 60 s).
+- `judgeCapture()`: on ticks where the mic endpoint is loud (> -30 dBFS) and the app's `peak`
+  (max analyser level since its last report — `store.tsx` telemetry) is under 10, that tick is
+  "unheard". Four loud ticks in six seconds, all unheard = **dead capture**. Any heard tick =
+  alive. Quiet mic = unknown, so silence and a mic that is off never count.
+- Output-dead and capture-dead share ONE escalation: re-open (20 s cooldown), three strikes in
+  ten minutes → `app.relaunch` (30 min cooldown). `chain.log` says which: `DEAD    capture --
+  mic endpoint peak=0.141 while the app's stream reads 3`. Status carries `micPeak`,
+  `micMeterAlive`, `deadWhy`; the tray header reads "Mic DEAD - app hears nothing".
+- The exact-zero rule stays as `judgeSilence()` (re-open only, never a relaunch).
+
+Ground truth for the next one is still `_who3.ps1` from the desktop session: the Insta360
+row with a peak and the CABLE Input row at 0.0000 is the whole diagnosis. Discord itself was
+fine that afternoon once its Input Device was put back on CABLE Output — it had been moved
+to the lapel directly as a workaround, which is why "the virtual mic isn't showing" looked
+like a Discord problem first.

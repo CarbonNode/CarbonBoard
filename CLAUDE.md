@@ -30,6 +30,26 @@ a purely local group stays there. Groups' names are the only thing not stored pe
 one on the desktop and the server's `group` string is unchanged, so the next sync creates the
 old name again — rename from the console (edit each clip) if the group came from the server.
 
+**Drag to combine / drop into a flyout.** Dragging a sound onto the MIDDLE of another card
+(inner 50%) shows "Group together" and drops the pair into a new group (rename asked at once),
+or into the target's existing group; the edges still reorder. Dropping into an open flyout, or
+onto the tile, joins that group; dragging a member out of the flyout onto the board ungroups it.
+
+**Tile size** (the resize glyph in the board header): width in px drives `repeat(auto-fill,
+minmax(W, 1fr))`, height is the art area in px (tiles can be wide, tall or square); both live
+in settings (`tileWidth`, `tileHeight`, 0 = the responsive default).
+
+**The renderer must reload the LIBRARY on `settings:updated`**, not just settings — the
+clip-server sync sends that same signal when it adds rows, and until 2026-09-18 the window kept
+its boot-time list: a clip synced after launch was invisible on the board and, because
+`hotkey:triggered` looked the id up in that stale list, `/api/play-clip` answered `success`
+while nothing played. That is exactly how the fresh dog barks "never played" while every older
+clip did. The hotkey handler now also fetches an unknown id from main before giving up.
+
+**Seek** rides on `POST /api/pause` as `action: "seek:<seconds>"` (position within the trimmed
+clip) because the node agent forwards only `action`/`soundId`/`clipId` to that route; the
+console's transport bar uses it (click or drag the progress line).
+
 The clip server also stores `imagePos {x,y}` (percent, null = centre) — where the button art's
 subject is, applied as `object-position` on the console's cover-cropped tiles and set from the
 console's Edit-clip crop control. CarbonBoard's own thumbnails are separate files and do not

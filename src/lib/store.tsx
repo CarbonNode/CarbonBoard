@@ -1181,8 +1181,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
 
-    const unsubscribeHotkey = window.electronAPI.onHotkeyTriggered((soundId) => {
-      const sound = state.sounds.find((s) => s.id === soundId);
+    const unsubscribeHotkey = window.electronAPI.onHotkeyTriggered(async (soundId) => {
+      let sound = state.sounds.find((s) => s.id === soundId);
+      if (!sound) {
+        // A clip the sync pulled after this window loaded is in the DB but
+        // not yet in state — the reason the dog barks "never played" while
+        // every older clip did (2026-09-18). Ask main for it rather than
+        // dropping the press; the library reload below catches state up.
+        sound = (await window.electronAPI.getSound(soundId)) ?? undefined;
+        if (sound) dispatch({ type: 'ADD_SOUND', payload: sound });
+      }
       if (sound) {
         playSound(sound);
       }
@@ -1210,12 +1218,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         case 'resume': resumeSound(id); break;
         case 'toggle': playing.paused ? resumeSound(id) : pauseSound(id); break;
         case 'stop': stopSound(id); break;
+        case 'seek': {
+          // Position is within the TRIMMED clip, as the transport shows it.
+          const s = state.sounds.find(x => x.id === id);
+          const start = s?.trimStart ?? 0;
+          seekSound(id, start + Math.max(0, cmd.position ?? 0));
+          break;
+        }
       }
     }) ?? (() => {});
 
     const unsubscribeSettingsUpdated = window.electronAPI.onSettingsUpdated?.(async () => {
       const settings = await window.electronAPI.getSettings();
       dispatch({ type: 'SET_SETTINGS', payload: settings });
+      // The same signal is what the clip-server sync sends when the library
+      // changed, so take the library too — otherwise a clip added while the
+      // app is open is invisible and unplayable until a restart.
+      const [categories, subCategories, sounds] = await Promise.all([
+        window.electronAPI.getCategories(),
+        window.electronAPI.getAllSubCategories(),
+        window.electronAPI.getSounds(),
+      ]);
+      dispatch({ type: 'SET_CATEGORIES', payload: categories });
+      dispatch({ type: 'SET_SUB_CATEGORIES', payload: subCategories });
+      dispatch({ type: 'SET_SOUNDS', payload: sounds });
       await refreshAudioDevices();
     }) || (() => {});
 
@@ -1226,7 +1252,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubscribePlayback();
       unsubscribeSettingsUpdated();
     };
-  }, [state.sounds, state.playingSounds, playSound, stopAllSounds, stopSound, pauseSound, resumeSound, pauseResumeLastSound]);
+  }, [state.sounds, state.playingSounds, playSound, stopAllSounds, stopSound, pauseSound, resumeSound, pauseResumeLastSound, seekSound]);
 
   // Settings operations
   const updateSettingsFn = useCallback(async (settings: Partial<Settings>) => {

@@ -29,6 +29,10 @@ interface GroupStackProps {
   dragProps?: React.HTMLAttributes<HTMLDivElement>;
   dragOver?: boolean;
   variant?: 'card' | 'row';
+  /** Drag events for the open flyout, so a sound dropped into it joins the group. */
+  flyoutDragProps?: React.HTMLAttributes<HTMLDivElement>;
+  /** How to draw a member; the grid passes its draggable card so members can be dragged back out. */
+  renderSound?: (sound: Sound) => React.ReactNode;
 }
 
 const thumbSrc = (s: Sound) => `local-file://${encodeURIComponent(s.thumbnailPath ?? '')}`;
@@ -43,6 +47,7 @@ function hue(str: string): string {
 export function GroupStack({
   group, sounds, open, onOpen, onClose, onRename, onExpandInline, onDelete,
   dragProps, dragOver, variant = 'card', renameRequested = false, onRenameDone,
+  flyoutDragProps, renderSound,
 }: GroupStackProps) {
   const { state, playSound } = useApp();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -207,7 +212,10 @@ export function GroupStack({
           <div className="absolute -top-0.5 left-0.5 right-0.5 h-2 rounded-t-lg bg-bg-tertiary pointer-events-none" />
 
           <div className="relative rounded-lg overflow-hidden">
-            <div className="aspect-square bg-bg-tertiary relative">
+            <div
+              className={`${state.settings.tileHeight ? '' : 'aspect-square'} bg-bg-tertiary relative`}
+              style={state.settings.tileHeight ? { height: state.settings.tileHeight } : undefined}
+            >
               {preview.length === 0 ? (
                 <div className="w-full h-full flex items-center justify-center text-text-secondary">
                   <StackGlyph large />
@@ -270,7 +278,8 @@ export function GroupStack({
       {open && pos && (
         <div
           ref={flyoutRef}
-          className="fixed z-[900] bg-bg-secondary border border-bg-tertiary rounded-xl shadow-2xl p-3 group-flyout"
+          {...flyoutDragProps}
+          className={`fixed z-[900] bg-bg-secondary border rounded-xl shadow-2xl p-3 group-flyout ${dragOver ? 'border-accent ring-2 ring-accent/40' : 'border-bg-tertiary'}`}
           style={{ left: pos.left, top: pos.top, width: pos.width, maxHeight: 'calc(100vh - 24px)', overflowY: 'auto' }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -298,14 +307,14 @@ export function GroupStack({
 
           {sounds.length === 0 ? (
             <div className="text-xs text-text-secondary py-6 text-center border border-dashed border-bg-tertiary rounded">
-              Empty group. Drag sounds onto the tile.
+              Empty group. Drag sounds onto the tile or in here.
             </div>
           ) : (
             <div
               className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${Math.min(4, Math.max(2, sounds.length))}, minmax(0, 1fr))` }}
             >
-              {sounds.map((s) => <SoundCard key={s.id} sound={s} />)}
+              {sounds.map((s) => renderSound ? renderSound(s) : <SoundCard key={s.id} sound={s} />)}
             </div>
           )}
         </div>

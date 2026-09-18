@@ -1396,13 +1396,25 @@ if (!gotTheLock) {
         if (req.method === 'POST' && pathname === '/api/pause') {
           const body = await readJsonBody(req);
           const rawAction = String(body['action'] ?? 'toggle');
+          // Seek rides on this route as `action: "seek:<seconds>"` (or `seek` +
+          // `position`) because the node agent forwards only action/soundId/clipId
+          // to /api/pause — a new route would need every agent updated first.
+          const seekMatch = /^seek(?::([0-9.]+))?$/.exec(rawAction);
           const action: PlaybackCommand['action'] =
-            rawAction === 'pause' || rawAction === 'resume' ? rawAction : 'toggle';
+            seekMatch ? 'seek' : rawAction === 'pause' || rawAction === 'resume' ? rawAction : 'toggle';
+          const position = seekMatch
+            ? Number(seekMatch[1] ?? body['position'] ?? 0)
+            : undefined;
           const soundId = targetSoundId(body);
+          if (action === 'seek' && !(Number.isFinite(position) && (position as number) >= 0)) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'seek needs a position in seconds' }));
+            return;
+          }
           if (!soundId && action === 'toggle') {
             mainWindow?.webContents.send('hotkey:pauseResume');
           } else {
-            const cmd: PlaybackCommand = { action, ...(soundId ? { soundId } : {}) };
+            const cmd: PlaybackCommand = { action, ...(soundId ? { soundId } : {}), ...(action === 'seek' ? { position } : {}) };
             mainWindow?.webContents.send('playback:control', cmd);
           }
           res.writeHead(200);

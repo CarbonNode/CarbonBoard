@@ -59,7 +59,7 @@ export interface PlayingSoundInfo {
   id: string; name: string; position: number; duration: number; paused: boolean; startedAt: number;
 }
 export interface PlaybackTelemetry { sounds: PlayingSoundInfo[]; at: number }
-export interface PlaybackCommand { action: 'pause' | 'resume' | 'toggle' | 'stop'; soundId?: string }
+export interface PlaybackCommand { action: 'pause' | 'resume' | 'toggle' | 'stop' | 'seek'; soundId?: string; position?: number }
 
 
 export interface Settings {
@@ -80,6 +80,9 @@ export interface Settings {
   micVolume: number;
   micNoiseGate: number; // 0 = off, 1-100 = threshold
   micNoiseGateAuto: boolean; // Auto-adjust threshold based on background noise
+  /** Board tile size in px (0/absent = responsive default). See shared/types.ts. */
+  tileWidth?: number;
+  tileHeight?: number;
   // View preferences per category
   categoryViewModes: Record<string, ViewMode>;
 }

@@ -19,6 +19,12 @@ export function SoundGrid() {
   // The one group whose flyout is open; a category change closes it.
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   useEffect(() => { setOpenGroupId(null); }, [state.selectedCategoryId]);
+  // Dragging a sound over another: the middle of the card means "put these two
+  // in a group together", the edges keep meaning "reorder", like a dock stack.
+  const [dragOverMode, setDragOverMode] = useState<'reorder' | 'combine'>('reorder');
+  const [sizeOpen, setSizeOpen] = useState(false);
+  const tileWidth = state.settings.tileWidth || 0;
+  const tileHeight = state.settings.tileHeight || 0;
 
   // Get view mode for current category
   const currentCategoryKey = state.selectedCategoryId || 'all';
@@ -158,8 +164,18 @@ export function SoundGrid() {
     e.dataTransfer.dropEffect = 'move';
     if (draggedSoundId && soundId !== draggedSoundId) {
       setDragOverSoundId(soundId);
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const fx = (e.clientX - r.left) / Math.max(1, r.width);
+      const fy = (e.clientY - r.top) / Math.max(1, r.height);
+      const inner = fx > 0.25 && fx < 0.75 && fy > 0.25 && fy < 0.75;
+      // Combining needs a category to hold the group; "All", favorites and
+      // uncategorized have none, and sub-soundbites stay under their parent.
+      const dragged = state.sounds.find(s => s.id === draggedSoundId);
+      const target = state.sounds.find(s => s.id === soundId);
+      const canCombine = !!showSubCategories && !!dragged && !!target && !dragged.parentSoundId && !target.parentSoundId;
+      setDragOverMode(inner && canCombine ? 'combine' : 'reorder');
     }
-  }, [draggedSoundId]);
+  }, [draggedSoundId, state.sounds, showSubCategories]);
 
   const handleSoundDragLeave = useCallback(() => {
     setDragOverSoundId(null);
@@ -224,6 +240,28 @@ export function SoundGrid() {
       return;
     }
 
+    if (dragOverMode === 'combine' && state.selectedCategoryId) {
+      // Drop on the middle of a card: the two become a group. If the target
+      // already sits in one, the dragged sound joins it; otherwise a new group
+      // is made from the pair and its name is asked for right away.
+      const target = state.sounds.find(s => s.id === targetSoundId);
+      setDraggedSoundId(null);
+      setDragOverSoundId(null);
+      setDragOverMode('reorder');
+      if (!target) return;
+      if (target.subCategoryId) {
+        await updateSound(draggedSoundId, { subCategoryId: target.subCategoryId });
+        return;
+      }
+      const group = await createSubCategory(state.selectedCategoryId, 'New Group');
+      if (!group) return;
+      await updateSound(targetSoundId, { subCategoryId: group.id });
+      await updateSound(draggedSoundId, { subCategoryId: group.id });
+      setEditingSubCategoryId(group.id);
+      setEditingSubCategoryName('New Group');
+      return;
+    }
+
     const sounds = filteredSounds();
     const draggedIndex = sounds.findIndex(s => s.id === draggedSoundId);
     const targetIndex = sounds.findIndex(s => s.id === targetSoundId);
@@ -247,7 +285,7 @@ export function SoundGrid() {
 
     setDraggedSoundId(null);
     setDragOverSoundId(null);
-  }, [draggedSoundId, filteredSounds, reorderSounds, state.selectedCategoryId, importSounds]);
+  }, [draggedSoundId, filteredSounds, reorderSounds, state.selectedCategoryId, importSounds, dragOverMode, state.sounds, updateSound, createSubCategory]);
 
   // Sub-category editing handlers
   const handleAddSubCategory = async () => {
@@ -287,16 +325,26 @@ export function SoundGrid() {
       onDragOver: (e: React.DragEvent) => handleSoundDragOver(e, sound.id),
       onDragLeave: handleSoundDragLeave,
       onDrop: (e: React.DragEvent) => handleSoundDrop(e, sound.id),
-      className: `transition-all ${
-        dragOverSoundId === sound.id ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''
+      className: `relative transition-all ${
+        dragOverSoundId === sound.id
+          ? dragOverMode === 'combine'
+            ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-bg-primary scale-95'
+            : 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary'
+          : ''
       } ${draggedSoundId === sound.id ? 'opacity-50' : ''}`,
     };
+    const combineHint = dragOverSoundId === sound.id && dragOverMode === 'combine' && (
+      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-blue-500/30">
+        <span className="rounded-md bg-bg-primary/90 px-2 py-1 text-xs font-semibold text-blue-200">Group together</span>
+      </div>
+    );
 
     const subs = subSoundsMap.get(sound.id);
     const hasSubs = !!subs && subs.length > 0;
 
     return (
       <div {...commonProps}>
+        {combineHint}
         {viewMode === 'grid' ? (
           <SoundCard
             sound={sound}
@@ -331,7 +379,10 @@ export function SoundGrid() {
   const renderSoundsGrid = (sounds: Sound[], leading: React.ReactNode[] = []) => {
     if (viewMode === 'grid') {
       return (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div
+          className={tileWidth ? 'grid gap-4' : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4'}
+          style={tileWidth ? { gridTemplateColumns: `repeat(auto-fill, minmax(${tileWidth}px, 1fr))` } : undefined}
+        >
           {leading}
           {sounds.flatMap(sound => {
             const items = [renderSoundItem(sound)];
@@ -391,6 +442,12 @@ export function SoundGrid() {
         onDragLeave: (e) => { e.stopPropagation(); handleSubCategoryDragLeave(); },
         onDrop: (e) => handleSubCategoryDrop(e, subCategory.id),
       }}
+      flyoutDragProps={{
+        onDragOver: (e) => { e.stopPropagation(); handleSubCategoryDragOver(e, subCategory.id); },
+        onDragLeave: (e) => { e.stopPropagation(); handleSubCategoryDragLeave(); },
+        onDrop: (e) => handleSubCategoryDrop(e, subCategory.id),
+      }}
+      renderSound={renderSoundItem}
     />
   ));
 
@@ -445,6 +502,47 @@ export function SoundGrid() {
               </button>
             )}
             <div className="flex-1" />
+            <div className="relative">
+              <button
+                onClick={() => setSizeOpen(o => !o)}
+                className={`p-1.5 rounded transition-colors ${sizeOpen ? 'bg-bg-tertiary' : 'hover:bg-bg-tertiary'}`}
+                title="Tile size"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4M9 9h6v6H9z" />
+                </svg>
+              </button>
+              {sizeOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-50 w-56 rounded-lg border border-bg-tertiary bg-bg-secondary p-3 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-text-secondary">Width</span>
+                    <span className="font-mono">{tileWidth ? `${tileWidth}px` : 'auto'}</span>
+                  </div>
+                  <input type="range" min={90} max={360} step={10} value={tileWidth || 160}
+                    onChange={(e) => updateSettings({ tileWidth: Number(e.target.value) })}
+                    className="w-full accent-accent" aria-label="Tile width" />
+                  <div className="flex items-center justify-between text-xs mt-3 mb-1">
+                    <span className="text-text-secondary">Height</span>
+                    <span className="font-mono">{tileHeight ? `${tileHeight}px` : 'square'}</span>
+                  </div>
+                  <input type="range" min={50} max={360} step={10} value={tileHeight || 160}
+                    onChange={(e) => updateSettings({ tileHeight: Number(e.target.value) })}
+                    className="w-full accent-accent" aria-label="Tile art height" />
+                  <div className="mt-3 flex justify-between">
+                    <button
+                      onClick={() => updateSettings({ tileWidth: 0, tileHeight: 0 })}
+                      className="text-xs text-text-secondary hover:text-text-primary"
+                    >
+                      Reset
+                    </button>
+                    <button onClick={() => setSizeOpen(false)} className="text-xs text-text-secondary hover:text-text-primary">Done</button>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={toggleViewMode}
               className="p-1.5 hover:bg-bg-tertiary rounded transition-colors"

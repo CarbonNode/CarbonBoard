@@ -78,7 +78,10 @@ export function SoundCard({ sound, expanded = false, hasSubSounds = false, onTog
         onContextMenu={handleContextMenu}
       >
         {/* Thumbnail */}
-        <div className="aspect-square bg-bg-tertiary flex items-center justify-center relative">
+        <div
+          className={`${state.settings.tileHeight ? '' : 'aspect-square'} bg-bg-tertiary flex items-center justify-center relative`}
+          style={state.settings.tileHeight ? { height: state.settings.tileHeight } : undefined}
+        >
           {sound.thumbnailPath ? (
             <img
               src={`local-file://${encodeURIComponent(sound.thumbnailPath)}`}

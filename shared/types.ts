@@ -80,6 +80,13 @@ export interface Settings {
   micNoiseSuppression: boolean; // Browser noise suppression (can cause boxy audio)
   micEchoCancellation: boolean; // Browser echo cancellation (can cause phasing)
   micAutoGainControl: boolean; // Browser auto gain control (can cause pumping)
+  /**
+   * Board tile size, in px. 0/absent = the responsive default (square art,
+   * columns by breakpoint). Width drives the column count (auto-fill); height
+   * is the art area's height, so tiles can be wide, tall or square.
+   */
+  tileWidth?: number;
+  tileHeight?: number;
   // View preferences per category (categoryId -> viewMode, 'all' for all sounds)
   categoryViewModes: Record<string, ViewMode>;
 }
@@ -169,8 +176,10 @@ export interface PlaybackTelemetry {
  * pause/resume/toggle act on the most recently started clip and stop stops all.
  */
 export interface PlaybackCommand {
-  action: 'pause' | 'resume' | 'toggle' | 'stop';
+  action: 'pause' | 'resume' | 'toggle' | 'stop' | 'seek';
   soundId?: string;
+  /** seek: seconds into the trimmed clip. */
+  position?: number;
 }
 
 export interface ElectronAPI {

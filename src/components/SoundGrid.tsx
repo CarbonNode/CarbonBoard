@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useState, useRef, useMemo } from 'react';
+import { useCallback, useState, useRef, useMemo, useEffect } from 'react';
 import { useApp } from '@/lib/store';
 import { SoundCard } from './SoundCard';
 import { SoundListItem } from './SoundListItem';
+import { GroupStack } from './GroupStack';
 import type { ViewMode, Sound, SubCategory } from '../../shared/types';
 
 export function SoundGrid() {
@@ -15,6 +16,9 @@ export function SoundGrid() {
   const [editingSubCategoryId, setEditingSubCategoryId] = useState<string | null>(null);
   const [editingSubCategoryName, setEditingSubCategoryName] = useState('');
   const dragCounterRef = useRef(0);
+  // The one group whose flyout is open; a category change closes it.
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  useEffect(() => { setOpenGroupId(null); }, [state.selectedCategoryId]);
 
   // Get view mode for current category
   const currentCategoryKey = state.selectedCategoryId || 'all';
@@ -262,7 +266,7 @@ export function SoundGrid() {
 
   const handleSaveSubCategoryName = async () => {
     if (editingSubCategoryId && editingSubCategoryName.trim()) {
-      await updateSubCategory(editingSubCategoryId, editingSubCategoryName.trim());
+      await updateSubCategory(editingSubCategoryId, { name: editingSubCategoryName.trim() });
     }
     setEditingSubCategoryId(null);
     setEditingSubCategoryName('');
@@ -324,10 +328,11 @@ export function SoundGrid() {
     return map;
   }, [state.sounds]);
 
-  const renderSoundsGrid = (sounds: Sound[]) => {
+  const renderSoundsGrid = (sounds: Sound[], leading: React.ReactNode[] = []) => {
     if (viewMode === 'grid') {
       return (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          {leading}
           {sounds.flatMap(sound => {
             const items = [renderSoundItem(sound)];
             const subs = subSoundsMap.get(sound.id);
@@ -341,6 +346,7 @@ export function SoundGrid() {
     }
     return (
       <div className="flex flex-col gap-1">
+        {leading}
         {sounds.flatMap(sound => {
           const items = [renderSoundItem(sound)];
           const subs = subSoundsMap.get(sound.id);
@@ -359,6 +365,34 @@ export function SoundGrid() {
 
   const { ungrouped, groups } = groupedSounds();
   const allSounds = filteredSounds();
+  // A collapsed group is one tile on the board (its sounds fly out on click);
+  // an expanded one is an inline section with a header, as before.
+  const stacks = groups.filter(g => g.subCategory.collapsed);
+  const sections = groups.filter(g => !g.subCategory.collapsed);
+
+  const stackTiles = stacks.map(({ subCategory, sounds }) => (
+    <GroupStack
+      key={`stack-${subCategory.id}`}
+      group={subCategory}
+      sounds={sounds}
+      open={openGroupId === subCategory.id}
+      onOpen={() => setOpenGroupId(subCategory.id)}
+      onClose={() => setOpenGroupId(prev => (prev === subCategory.id ? null : prev))}
+      onRename={(name) => { void updateSubCategory(subCategory.id, { name }); }}
+      renameRequested={editingSubCategoryId === subCategory.id}
+      onRenameDone={() => { setEditingSubCategoryId(null); setEditingSubCategoryName(''); }}
+      onExpandInline={() => { setOpenGroupId(null); void updateSubCategory(subCategory.id, { collapsed: false }); }}
+      onDelete={() => { void handleDeleteSubCategory(subCategory.id); }}
+      variant={viewMode === 'grid' ? 'card' : 'row'}
+      dragOver={dragOverSubCategoryId === subCategory.id && !!draggedSoundId}
+      dragProps={{
+        // Stop here: the board underneath would otherwise reset the target to "ungrouped".
+        onDragOver: (e) => { e.stopPropagation(); handleSubCategoryDragOver(e, subCategory.id); },
+        onDragLeave: (e) => { e.stopPropagation(); handleSubCategoryDragLeave(); },
+        onDrop: (e) => handleSubCategoryDrop(e, subCategory.id),
+      }}
+    />
+  ));
 
   return (
     <div
@@ -431,21 +465,23 @@ export function SoundGrid() {
           {/* Render sounds - either grouped or flat */}
           {showSubCategories ? (
             <div className="space-y-6">
-              {/* Ungrouped sounds */}
-              {ungrouped.length > 0 && (
+              {/* The board: group tiles first, then the ungrouped sounds */}
+              {(ungrouped.length > 0 || stackTiles.length > 0) && (
                 <div
                   className={`${dragOverSubCategoryId === null && draggedSoundId ? 'ring-2 ring-accent rounded-lg p-2' : ''}`}
                   onDragOver={(e) => handleSubCategoryDragOver(e, null)}
                   onDragLeave={handleSubCategoryDragLeave}
                   onDrop={(e) => handleSubCategoryDrop(e, null)}
                 >
-                  <div className="text-xs text-text-secondary mb-2 uppercase tracking-wider">Ungrouped</div>
-                  {renderSoundsGrid(ungrouped)}
+                  {sections.length > 0 && (
+                    <div className="text-xs text-text-secondary mb-2 uppercase tracking-wider">Ungrouped</div>
+                  )}
+                  {renderSoundsGrid(ungrouped, stackTiles)}
                 </div>
               )}
 
-              {/* Sub-category groups */}
-              {groups.map(({ subCategory, sounds }) => (
+              {/* Inline (expanded) groups */}
+              {sections.map(({ subCategory, sounds }) => (
                 <div
                   key={subCategory.id}
                   className={`${dragOverSubCategoryId === subCategory.id ? 'ring-2 ring-accent rounded-lg p-2' : ''}`}
@@ -484,6 +520,15 @@ export function SoundGrid() {
                     )}
                     <span className="text-xs text-text-secondary">({sounds.length})</span>
                     <button
+                      onClick={() => { void updateSubCategory(subCategory.id, { collapsed: true }); }}
+                      className="p-0.5 rounded hover:bg-bg-tertiary text-text-secondary hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Collapse to one tile (click it to fly out)"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                      </svg>
+                    </button>
+                    <button
                       onClick={() => handleDeleteSubCategory(subCategory.id)}
                       className="p-0.5 rounded hover:bg-red-600/20 text-text-secondary hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                       title="Delete group"
@@ -506,7 +551,7 @@ export function SoundGrid() {
               ))}
 
               {/* Drop zone for ungrouped if no ungrouped sounds exist */}
-              {ungrouped.length === 0 && groups.length > 0 && (
+              {ungrouped.length === 0 && stackTiles.length === 0 && sections.length > 0 && (
                 <div
                   className={`text-xs text-text-secondary py-4 text-center border border-dashed border-bg-tertiary rounded ${
                     dragOverSubCategoryId === null && draggedSoundId ? 'ring-2 ring-accent' : ''

@@ -15,8 +15,20 @@ export interface SubCategory {
   name: string;
   categoryId: string;  // Parent category (required)
   order: number;
+  /**
+   * true = the group is one tile on the board and its sounds fly out when it
+   * is clicked (the default); false = the group is an inline section with a
+   * header, every sound visible.
+   */
+  collapsed: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** What may change on a group after it exists. */
+export interface SubCategoryUpdate {
+  name?: string;
+  collapsed?: boolean;
 }
 
 export interface Sound {
@@ -142,7 +154,7 @@ export interface ElectronAPI {
   getSubCategories: (categoryId: string) => Promise<SubCategory[]>;
   getAllSubCategories: () => Promise<SubCategory[]>;
   createSubCategory: (categoryId: string, name: string) => Promise<SubCategory>;
-  updateSubCategory: (id: string, name: string) => Promise<SubCategory>;
+  updateSubCategory: (id: string, updates: SubCategoryUpdate) => Promise<SubCategory>;
   deleteSubCategory: (id: string) => Promise<void>;
   reorderSubCategories: (ids: string[]) => Promise<void>;
 

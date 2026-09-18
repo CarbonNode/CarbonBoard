@@ -181,6 +181,46 @@
     border-radius: 2px;
   }
 
+  /* A collapsed group: one tile whose sounds open in a sheet */
+  .sound.stack .thumb-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--bg); }
+  .sound.stack .thumb-wrap.one { grid-template-columns: 1fr; }
+  .sound.stack .thumb-wrap .cell { overflow: hidden; position: relative; }
+  .sound.stack .thumb-wrap .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .sound.stack .thumb-wrap .cell .placeholder { font-size: 16px; }
+  .sound.stack .count {
+    position: absolute; top: 2px; right: 3px;
+    background: rgba(0,0,0,0.75); color: #ddd;
+    font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px;
+    pointer-events: none;
+  }
+  .sound.stack .name::before { content: '\2630  '; color: var(--text-dim); font-size: 9px; }
+  .group-sheet {
+    position: fixed; inset: 0; z-index: 210;
+    background: rgba(0,0,0,0.6);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .group-sheet.active { display: flex; }
+  .group-sheet .panel {
+    width: 100%; max-height: 80vh; overflow-y: auto;
+    background: var(--bg); border-radius: 14px 14px 0 0;
+    padding: 10px; box-sizing: border-box;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .group-sheet .head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .group-sheet .head .title { flex: 1; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .group-sheet .head button {
+    background: var(--surface2); color: var(--text); border: none;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    min-height: 36px;
+  }
+  .group-sheet .head button.rnd { background: var(--accent); color: #fff; }
+  .group-sheet .members {
+    display: grid; grid-template-columns: repeat(var(--sheet-cols, 3), 1fr); gap: 6px;
+  }
+  .group-sheet .members .sound { height: 110px; }
+
   /* Sub-category headers */
   .sub-header {
     grid-column: 1 / -1;
@@ -311,6 +351,16 @@
     <div class="hint">Tap to wake</div>
   </div>
   <div class="cat-picker" id="catPicker"></div>
+  <div class="group-sheet" id="groupSheet">
+    <div class="panel">
+      <div class="head">
+        <span class="title" id="groupSheetTitle"></span>
+        <button class="rnd" id="groupSheetRandom">RANDOM</button>
+        <button id="groupSheetClose">CLOSE</button>
+      </div>
+      <div class="members" id="groupSheetMembers"></div>
+    </div>
+  </div>
   <div class="disconnected-banner" id="dcBanner">Connection lost — retrying...</div>
   <div class="top-bar">
     <div class="header">
@@ -448,6 +498,7 @@ async function loadData() {
       allSounds = soundData.sounds || [];
       lastSoundsJson = newSoundsJson;
       gridBuilt = false; // force full rebuild
+      if (openStackId) renderStackSheet();
     }
 
     setConnected(true);
@@ -521,17 +572,26 @@ function getFilteredSounds() {
         subsByCat[s.subCategoryId].push(s);
       }
     });
-    const finalList = [...noSub];
-    subCategories
+    // Collapsed groups are ONE tile each, ahead of the loose sounds; expanded
+    // groups stay inline sections below them, as the desktop app draws them.
+    const inCat = subCategories
       .filter(sc => sc.categoryId === activeCategoryId)
-      .sort((a, b) => (a.order || 0) - (b.order || 0))
-      .forEach(sc => {
-        const scSounds = subsByCat[sc.id];
-        if (scSounds && scSounds.length > 0) {
-          finalList.push({ _subHeader: sc.name, _id: 'sub_' + sc.id });
-          finalList.push(...scSounds);
-        }
-      });
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const finalList = [];
+    inCat.forEach(sc => {
+      const scSounds = subsByCat[sc.id] || [];
+      if (sc.collapsed !== false && (scSounds.length > 0 || !searchQuery)) {
+        finalList.push({ _stack: sc, _members: scSounds, _id: 'stack_' + sc.id });
+      }
+    });
+    finalList.push(...noSub);
+    inCat.forEach(sc => {
+      const scSounds = subsByCat[sc.id];
+      if (sc.collapsed === false && scSounds && scSounds.length > 0) {
+        finalList.push({ _subHeader: sc.name, _id: 'sub_' + sc.id });
+        finalList.push(...scSounds);
+      }
+    });
     return finalList;
   }
   return filtered;
@@ -608,6 +668,94 @@ function makePlaceholder(s) {
   ph.textContent = s.name.charAt(0).toUpperCase();
   return ph;
 }
+
+function buildStackEl(item) {
+  const sc = item._stack, members = item._members;
+  const el = document.createElement('div');
+  el.className = 'sound stack';
+  el.dataset.id = item._id;
+  el.dataset.stack = sc.id;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'thumb-wrap' + (members.length <= 1 ? ' one' : '');
+  members.slice(0, 4).forEach(s => {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    if (s.hasThumbnail) {
+      const img = document.createElement('img');
+      img.loading = 'lazy'; img.alt = '';
+      img.src = '/api/thumbnail/' + s.id;
+      img.onerror = function() { this.replaceWith(makePlaceholder(s)); };
+      cell.appendChild(img);
+    } else {
+      cell.appendChild(makePlaceholder(s));
+    }
+    wrap.appendChild(cell);
+  });
+  if (members.length === 0) wrap.appendChild(makePlaceholder({ name: sc.name }));
+  el.appendChild(wrap);
+
+  const count = document.createElement('span');
+  count.className = 'count';
+  count.textContent = members.length;
+  el.appendChild(count);
+
+  const nameDiv = document.createElement('div');
+  nameDiv.className = 'name';
+  nameDiv.textContent = sc.name;
+  nameDiv.title = sc.name;
+  el.appendChild(nameDiv);
+  return el;
+}
+
+// The open group's sheet: its sounds as normal tiles, plus RANDOM.
+let openStackId = null;
+let lastRandomId = null;
+function openStack(id) {
+  const sc = subCategories.find(x => x.id === id);
+  if (!sc) return;
+  openStackId = id;
+  document.getElementById('groupSheetTitle').textContent = sc.name;
+  renderStackSheet();
+  document.getElementById('groupSheet').classList.add('active');
+}
+function closeStack() {
+  openStackId = null;
+  document.getElementById('groupSheet').classList.remove('active');
+}
+function stackMembers() {
+  return allSounds.filter(s => s.subCategoryId === openStackId && !s.parentSoundId)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+}
+function renderStackSheet() {
+  if (!openStackId) return;
+  const members = stackMembers();
+  const box = document.getElementById('groupSheetMembers');
+  box.style.setProperty('--sheet-cols', Math.max(2, Math.min(4, members.length)));
+  box.innerHTML = '';
+  members.forEach(s => {
+    const el = buildSoundEl(s);
+    el.classList.toggle('playing', !!playingTimers[s.id]);
+    box.appendChild(el);
+  });
+}
+function playRandomInStack() {
+  const members = stackMembers();
+  if (members.length === 0) return;
+  let pool = members.length > 1 && lastRandomId ? members.filter(s => s.id !== lastRandomId) : members;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  lastRandomId = pick.id;
+  const el = document.querySelector('#groupSheetMembers .sound[data-id="' + pick.id + '"]');
+  playSound(pick.id, el);
+}
+document.getElementById('groupSheetClose').addEventListener('click', closeStack);
+document.getElementById('groupSheetRandom').addEventListener('click', playRandomInStack);
+document.getElementById('groupSheet').addEventListener('click', e => {
+  if (e.target === e.currentTarget) { closeStack(); return; }
+  const soundEl = e.target.closest('.sound');
+  if (!soundEl || !soundEl.dataset.id) return;
+  playSound(soundEl.dataset.id, soundEl);
+});
 
 function buildSubHeader(item) {
   const el = document.createElement('div');
@@ -703,6 +851,8 @@ function renderGrid() {
     items.forEach(item => {
       if (item._subHeader) {
         frag.appendChild(buildSubHeader(item));
+      } else if (item._stack) {
+        frag.appendChild(buildStackEl(item));
       } else {
         frag.appendChild(buildSoundEl(item));
       }
@@ -715,9 +865,17 @@ function renderGrid() {
   // Patch playing state (always, cheap operation)
   grid.querySelectorAll('.sound').forEach(el => {
     const id = el.dataset.id;
-    const shouldPlay = !!playingTimers[id];
+    // A group tile lights up while any of its members plays.
+    const shouldPlay = el.dataset.stack
+      ? allSounds.some(s => s.subCategoryId === el.dataset.stack && !!playingTimers[s.id])
+      : !!playingTimers[id];
     el.classList.toggle('playing', shouldPlay);
   });
+  if (openStackId) {
+    document.querySelectorAll('#groupSheetMembers .sound').forEach(el => {
+      el.classList.toggle('playing', !!playingTimers[el.dataset.id]);
+    });
+  }
 }
 
 function esc(str) {
@@ -760,6 +918,7 @@ document.getElementById('grid').addEventListener('click', e => {
 
   const soundEl = e.target.closest('.sound');
   if (!soundEl) return;
+  if (soundEl.dataset.stack) { openStack(soundEl.dataset.stack); return; }
   const id = soundEl.dataset.id;
   if (!id) return;
   playSound(id, soundEl);

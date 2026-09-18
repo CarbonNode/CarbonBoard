@@ -23,7 +23,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
 import { exec } from 'child_process';
-import type { Category, SubCategory, Sound, Settings } from './types';
+import type { Category, SubCategory, SubCategoryUpdate, Sound, Settings } from './types';
 
 // ============================================================
 // App Identity (for Windows taskbar pinning)
@@ -175,6 +175,13 @@ function initDatabase() {
     // Column already exists
   }
 
+  // Groups collapse to one tile with a flyout by default (migration, 2026-09-18)
+  try {
+    db.exec('ALTER TABLE sub_categories ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 1');
+  } catch {
+    // Column already exists
+  }
+
   // Initialize default settings if not exist
   const defaultSettings: Settings = {
     masterVolume: 1.0,
@@ -263,19 +270,27 @@ function reorderCategories(ids: string[]): void {
 // SubCategory Database Operations
 // ============================================================
 
+// SQLite stores the flag as 0/1; the renderer wants a boolean.
+type SubCategoryRow = Omit<SubCategory, 'collapsed'> & { collapsed: number | null };
+const subCategoryFromRow = (r: SubCategoryRow): SubCategory => ({ ...r, collapsed: r.collapsed !== 0 });
+
 function getSubCategories(categoryId: string): SubCategory[] {
-  return db
+  return (db
     .prepare('SELECT * FROM sub_categories WHERE categoryId = ? ORDER BY "order" ASC')
-    .all(categoryId) as SubCategory[];
+    .all(categoryId) as SubCategoryRow[]).map(subCategoryFromRow);
 }
 
 function getAllSubCategories(): SubCategory[] {
-  return db
+  return (db
     .prepare('SELECT * FROM sub_categories ORDER BY "order" ASC')
-    .all() as SubCategory[];
+    .all() as SubCategoryRow[]).map(subCategoryFromRow);
 }
 
-function createSubCategory(categoryId: string, name: string): SubCategory {
+function getSubCategory(id: string): SubCategory {
+  return subCategoryFromRow(db.prepare('SELECT * FROM sub_categories WHERE id = ?').get(id) as SubCategoryRow);
+}
+
+function createSubCategory(categoryId: string, name: string, collapsed = true): SubCategory {
   const id = uuidv4();
   const now = new Date().toISOString();
   const maxOrder = db
@@ -284,20 +299,22 @@ function createSubCategory(categoryId: string, name: string): SubCategory {
   const order = (maxOrder?.maxOrder ?? -1) + 1;
 
   db.prepare(
-    'INSERT INTO sub_categories (id, name, categoryId, "order", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(id, name, categoryId, order, now, now);
+    'INSERT INTO sub_categories (id, name, categoryId, "order", collapsed, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, name, categoryId, order, collapsed ? 1 : 0, now, now);
 
-  return { id, name, categoryId, order, createdAt: now, updatedAt: now };
+  return { id, name, categoryId, order, collapsed, createdAt: now, updatedAt: now };
 }
 
-function updateSubCategory(id: string, name: string): SubCategory {
+function updateSubCategory(id: string, updates: SubCategoryUpdate): SubCategory {
   const now = new Date().toISOString();
-  db.prepare('UPDATE sub_categories SET name = ?, updatedAt = ? WHERE id = ?').run(
-    name,
+  const current = getSubCategory(id);
+  db.prepare('UPDATE sub_categories SET name = ?, collapsed = ?, updatedAt = ? WHERE id = ?').run(
+    updates.name ?? current.name,
+    (updates.collapsed ?? current.collapsed) ? 1 : 0,
     now,
     id
   );
-  return db.prepare('SELECT * FROM sub_categories WHERE id = ?').get(id) as SubCategory;
+  return getSubCategory(id);
 }
 
 function deleteSubCategory(id: string): void {
@@ -791,8 +808,8 @@ function setupIpcHandlers(): void {
   ipcMain.handle('db:createSubCategory', (_, categoryId: string, name: string) =>
     createSubCategory(categoryId, name)
   );
-  ipcMain.handle('db:updateSubCategory', (_, id: string, name: string) =>
-    updateSubCategory(id, name)
+  ipcMain.handle('db:updateSubCategory', (_, id: string, updates: SubCategoryUpdate | string) =>
+    updateSubCategory(id, typeof updates === 'string' ? { name: updates } : updates)
   );
   ipcMain.handle('db:deleteSubCategory', (_, id: string) => deleteSubCategory(id));
   ipcMain.handle('db:reorderSubCategories', (_, ids: string[]) =>
@@ -978,6 +995,8 @@ if (!gotTheLock) {
         createSound: createSound as unknown as (s: Record<string, unknown>) => { id: string },
         getCategories,
         createCategory,
+        getSubCategories,
+        createSubCategory,
       },
       process.env.CARBONBOARD_CLIP_SERVER,
     );

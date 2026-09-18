@@ -53,6 +53,18 @@ const num = (v, dflt = 0) => {
 };
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+/**
+ * Where the art's subject is, as percentages of the image (50/50 = centre).
+ * Tiles are not square and are cropped with object-fit: cover, so this is the
+ * object-position that keeps the face in frame. null = centre.
+ */
+function imagePos(v) {
+  if (!v || typeof v !== 'object') return null;
+  const x = clamp(num(v.x, 50), 0, 100), y = clamp(num(v.y, 50), 0, 100);
+  if (Math.abs(x - 50) < 0.5 && Math.abs(y - 50) < 0.5) return null;
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+}
+
 function publicClip(c) {
   return { ...c, file: `/clips/${c.id}.${c.ext}` };
 }
@@ -103,6 +115,7 @@ app.post('/api/clips', upload.single('file'), (req, res) => {
     ext: req.clipExt,
     name: String(b.name || path.parse(req.file.originalname).name).slice(0, 120),
     category: String(b.category || '').slice(0, 60) || null,
+    group: String(b.group || '').slice(0, 60) || null,   // a flyout group inside the category
     favorite: b.favorite === 'true' || b.favorite === true,
     volume: clamp(num(b.volume, 1), 0, 2),           // CarbonBoard's 0..1 gain (2 = boost)
     trimStart: Math.max(0, num(b.trimStart, 0)),      // seconds
@@ -124,6 +137,8 @@ app.patch('/api/clips/:id', (req, res) => {
   const b = req.body ?? {};
   if (b.name != null) clip.name = String(b.name).slice(0, 120);
   if (b.category !== undefined) clip.category = b.category ? String(b.category).slice(0, 60) : null;
+  if (b.group !== undefined) clip.group = b.group ? String(b.group).slice(0, 60) : null;
+  if (b.imagePos !== undefined) clip.imagePos = imagePos(b.imagePos);
   if (b.favorite != null) clip.favorite = !!b.favorite;
   if (b.volume != null) clip.volume = clamp(num(b.volume, clip.volume), 0, 2);
   if (b.trimStart != null) clip.trimStart = Math.max(0, num(b.trimStart, clip.trimStart));
@@ -164,6 +179,7 @@ app.post('/api/clips/:id/image', imageUpload.single('file'), (req, res) => {
   if (!req.file || !req.imgExt) return res.status(400).json({ error: 'Missing image file' });
   const prev = clip.image ? path.basename(String(clip.image)) : null;
   clip.image = `/images/${clip.id}.${req.imgExt}`;
+  clip.imagePos = null; // a new picture has its own subject
   clip.updatedAt = new Date().toISOString();
   save();
   if (prev && prev !== `${clip.id}.${req.imgExt}`) {

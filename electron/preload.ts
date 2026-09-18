@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, desktopCapturer } from 'electron';
-import type { Sound, Settings, Category, SubCategory } from './types';
+import type { Sound, Settings, Category, SubCategory, SubCategoryUpdate } from './types';
 import type { MicTelemetry } from './chain-watch';
 import type { PlaybackTelemetry, PlaybackCommand } from './types';
 
@@ -27,8 +27,8 @@ const electronAPI = {
     ipcRenderer.invoke('db:getAllSubCategories'),
   createSubCategory: (categoryId: string, name: string): Promise<SubCategory> =>
     ipcRenderer.invoke('db:createSubCategory', categoryId, name),
-  updateSubCategory: (id: string, name: string): Promise<SubCategory> =>
-    ipcRenderer.invoke('db:updateSubCategory', id, name),
+  updateSubCategory: (id: string, updates: SubCategoryUpdate): Promise<SubCategory> =>
+    ipcRenderer.invoke('db:updateSubCategory', id, updates),
   deleteSubCategory: (id: string): Promise<void> =>
     ipcRenderer.invoke('db:deleteSubCategory', id),
   reorderSubCategories: (ids: string[]): Promise<void> =>

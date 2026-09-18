@@ -6,6 +6,35 @@
 - Installer output: `dist/CarbonBoard Setup 1.0.0.exe`
 - When rebuilding the installer, always upload it to the GitHub release (`gh release`)
 
+## Groups: one tile that flies out (2026-09-18)
+
+A **group** (`sub_categories`, "Add Group" inside a category) is, by default, ONE tile on the
+board — a stacked square showing up to four of its members' art and a count. Clicking it opens
+a **flyout** anchored to the tile with every member as a normal `SoundCard` (click plays; the
+flyout stays open so you can fire several); **shift-click** the tile, the dice on it, or
+**Random** in the flyout plays a random member (never the same one twice in a row). Right-click:
+Open / Play random / Rename / Show inline / Delete. "Show inline" (`collapsed = false`) turns
+it back into the old header-plus-section layout, and the section header's collapse arrow
+reverses it. The row (list-view) form opens the same flyout. Component: `src/components/GroupStack.tsx`;
+wiring in `SoundGrid.tsx` (stacks render ahead of the ungrouped sounds; a sound dragged onto a
+stack joins it; dropping on the board around it ungroups).
+
+The phone remote (`electron/web-remote.html`) draws the same stacks, opening a bottom sheet
+with the members and a RANDOM button. `/api/categories` carries `collapsed` per sub-category.
+
+**The clip server owns groups too.** A server clip may carry `group` (`server/server.js`,
+POST/PATCH `/api/clips`), and `clip-sync.ts` maps it to a sub-category by name inside the
+clip's category — created collapsed on first sight. The console's Edit-clip sheet sets it. Sync
+writes `subCategoryId` only when the server names a group (`COALESCE`), so a sound dragged into
+a purely local group stays there. Groups' names are the only thing not stored per clip: rename
+one on the desktop and the server's `group` string is unchanged, so the next sync creates the
+old name again — rename from the console (edit each clip) if the group came from the server.
+
+The clip server also stores `imagePos {x,y}` (percent, null = centre) — where the button art's
+subject is, applied as `object-position` on the console's cover-cropped tiles and set from the
+console's Edit-clip crop control. CarbonBoard's own thumbnails are separate files and do not
+read it (yet).
+
 ## The microphone chain (read before touching anything in `src/lib/store.tsx`)
 
 The app is the only thing between the physical microphone and Discord: it captures one

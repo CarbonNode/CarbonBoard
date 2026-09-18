@@ -17,6 +17,8 @@ import type { Database } from 'better-sqlite3';
 
 export interface ServerClip {
   id: string; ext: string; name: string; category: string | null; favorite: boolean;
+  /** A group inside the category — one tile on the board that flies out. */
+  group?: string | null;
   volume: number; trimStart: number; trimEnd: number | null; duration: number;
   file: string; image?: string | null;
 }
@@ -40,6 +42,8 @@ type Deps = {
   createSound: (s: Record<string, unknown>) => { id: string };
   getCategories: () => { id: string; name: string }[];
   createCategory: (name: string) => { id: string; name: string };
+  getSubCategories: (categoryId: string) => { id: string; name: string }[];
+  createSubCategory: (categoryId: string, name: string) => { id: string; name: string };
 };
 
 let deps: Deps | null = null;
@@ -97,7 +101,7 @@ export async function syncClips(): Promise<SyncResult> {
   if (!deps) return { ok: false, added: 0, updated: 0, adopted: 0, removed: 0, total: 0, error: 'sync not initialised' };
   if (syncing) return { ok: false, added: 0, updated: 0, adopted: 0, removed: 0, total: 0, error: 'A sync is already running' };
   syncing = true;
-  const { db, soundsPath, createSound, getCategories, createCategory, onChanged } = deps;
+  const { db, soundsPath, createSound, getCategories, createCategory, getSubCategories, createSubCategory, onChanged } = deps;
 
   try {
     const { clips } = await fetchJson<{ clips: ServerClip[] }>(`${baseUrl}/api/clips`);
@@ -117,11 +121,20 @@ export async function syncClips(): Promise<SyncResult> {
       if (!catId.has(key(name))) catId.set(key(name), createCategory(name).id);
     }
 
+    // Groups live inside a category; a clip's `group` names one and it is
+    // created on first sight, collapsed to a flyout tile like any new group.
+    const groupId = (categoryId: string | null, group: string | null | undefined): string | null => {
+      if (!categoryId || !group?.trim()) return null;
+      const existing = getSubCategories(categoryId).find(sc => key(sc.name) === key(group));
+      return (existing ?? createSubCategory(categoryId, group.trim())).id;
+    };
+
     let added = 0, updated = 0, adopted = 0;
 
     for (const clip of clips) {
       const dest = path.join(soundsPath, `cb-${clip.id}.${clip.ext}`);
       const category = clip.category ? catId.get(key(clip.category)) ?? null : null;
+      const subCategory = groupId(category, clip.group);
 
       let row = byClipId.get(clip.id);
       if (!row) {
@@ -142,13 +155,17 @@ export async function syncClips(): Promise<SyncResult> {
 
       if (row) {
         // The server owns everything except the hotkey, which is this PC's own.
+        // A group is only written when the server names one: a sound someone
+        // dragged into a local group stays there unless the server says otherwise.
         db.prepare(`
           UPDATE sounds SET name = ?, categoryId = ?, favorite = ?, volume = ?,
-                            trimStart = ?, trimEnd = ?, duration = ?, updatedAt = ?
+                            trimStart = ?, trimEnd = ?, duration = ?, updatedAt = ?,
+                            subCategoryId = COALESCE(?, subCategoryId)
           WHERE id = ?
         `).run(
           clip.name, category, clip.favorite ? 1 : 0, clip.volume,
-          clip.trimStart, clip.trimEnd, clip.duration, new Date().toISOString(), row.id,
+          clip.trimStart, clip.trimEnd, clip.duration, new Date().toISOString(),
+          subCategory, row.id,
         );
         if (!adopted || row.clipId !== clip.id) updated++;
       } else {
@@ -159,6 +176,7 @@ export async function syncClips(): Promise<SyncResult> {
           filePath: `${baseUrl}${clip.file}`,
           storedPath: dest,
           categoryId: category,
+          subCategoryId: subCategory,
           favorite: clip.favorite,
           volume: clip.volume,
           trimStart: clip.trimStart,

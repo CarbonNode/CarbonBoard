@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
-import type { Category, SubCategory, Sound, Settings, AudioDevice, ViewMode } from '../../shared/types';
+import type { Category, SubCategory, SubCategoryUpdate, Sound, Settings, AudioDevice, ViewMode } from '../../shared/types';
 import { findDeviceByLabel } from './deviceLabel';
 // VAD disabled - doesn't work in packaged Electron due to ASAR/WASM issues
 
@@ -309,7 +309,7 @@ interface AppContextType {
   updateCategory: (id: string, name: string) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   createSubCategory: (categoryId: string, name: string) => Promise<SubCategory | undefined>;
-  updateSubCategory: (id: string, name: string) => Promise<void>;
+  updateSubCategory: (id: string, updates: SubCategoryUpdate) => Promise<void>;
   deleteSubCategory: (id: string) => Promise<void>;
   reorderSubCategories: (subCategoryIds: string[]) => Promise<void>;
   importSounds: (filePaths: string[]) => Promise<void>;
@@ -868,9 +868,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return subCategory;
   }, []);
 
-  const updateSubCategory = useCallback(async (id: string, name: string) => {
+  const updateSubCategory = useCallback(async (id: string, updates: SubCategoryUpdate) => {
     if (!window.electronAPI) return;
-    const subCategory = await window.electronAPI.updateSubCategory(id, name);
+    const subCategory = await window.electronAPI.updateSubCategory(id, updates);
     dispatch({ type: 'UPDATE_SUB_CATEGORY', payload: subCategory });
   }, []);
 

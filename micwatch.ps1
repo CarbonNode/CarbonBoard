@@ -21,6 +21,22 @@ function Write-Log($msg) {
   Add-Content -Path $log -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg)
 }
 
+# Start a process that must OUTLIVE this script. Both watchdog tasks run under
+# CortexHiddenRun.exe, whose job object has KILL_ON_JOB_CLOSE and no breakaway:
+# a Start-Process child dies the instant the script exits. 2026-09-19 13:45-13:50
+# CarbonBoard was "restarted" nine times and lived under a minute each time (no
+# quit line in main.log = hard kill) until nothing was feeding the cable at all.
+# Win32_Process.Create runs in the WMI host -- outside the job, same session.
+function Start-Detached([string]$File, [string]$Arguments = '') {
+  $cmd = ('"{0}" {1}' -f $File, $Arguments).Trim()
+  try {
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd } -ErrorAction Stop
+    if ($r.ReturnValue -eq 0) { return }
+  } catch { }
+  # Fallback: explorer is outside the job too.
+  Start-Process explorer.exe -ArgumentList $cmd
+}
+
 # Windows renumbers a duplicated endpoint inside its name ("3- Astro A50") and
 # Chromium appends a USB id; neither means a different device.
 function Norm($s) {
@@ -92,12 +108,12 @@ try {
   if (Test-Path $exe) {
     if (-not (Get-Process CarbonBoard -ErrorAction SilentlyContinue)) {
       Write-Log 'start   CarbonBoard is not running -- starting it'
-      Start-Process $exe -ArgumentList '--minimized'
+      Start-Detached $exe '--minimized'
     } else {
       Write-Log 'restart CarbonBoard is running but not answering -- restarting it'
       Get-Process CarbonBoard -ErrorAction SilentlyContinue | Stop-Process -Force
       Start-Sleep -Seconds 3
-      Start-Process $exe -ArgumentList '--minimized'
+      Start-Detached $exe '--minimized'
     }
     $up = $false
     for ($i = 0; $i -lt 12 -and -not $up; $i++) {
@@ -135,6 +151,20 @@ try {
   $settings = (Invoke-WebRequest -UseBasicParsing "$api/api/settings" -TimeoutSec 8).Content | ConvertFrom-Json
   if (-not $settings.micPassthroughEnabled) { Write-Log "idle    passthrough is switched off on purpose, leaving it alone"; exit 0 }
 } catch { }
+
+# Endpoint VOLUME guard (2026-09-19). Sessions, cable and chain were all green
+# while the A50 Voice capture endpoint sat at 50% and CABLE Output at 48%:
+# speech reached the app at ~-36 dBFS and the gate barely opened. Nothing here
+# sets those levels, something else lowers them, so hold both at unity every
+# pass and log when it had to. (Windows level, not the app's own mic gain.)
+try {
+  # In a CHILD process: its Add-Type inside this process broke _who2.ps1's Add-Type
+  # (three false 'no microphone open' verdicts + a needless restart, 2026-09-19 13:45).
+  $vg = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'volguard.ps1') -Mic "$wantMic" 2>&1 | Where-Object { "$_".Trim() -ne '' })
+  foreach ($l in $vg) { Write-Log ('volume  restored ' + $l) }
+} catch {
+  Write-Log ('volume  guard failed -- ' + $_.Exception.Message)
+}
 
 $check = Test-Chain $wantMic
 if ($check.problems.Count -eq 0 -and -not $stuck) {
@@ -187,7 +217,7 @@ if ((Test-Path $exe) -and ((Get-Date) - $last).TotalMinutes -ge 30) {
   Write-Log 'restart  self-heal failed, restarting CarbonBoard'
   Get-Process CarbonBoard -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Seconds 3
-  Start-Process $exe
+  Start-Detached $exe '--minimized'
   # Boot, enumerate the devices, re-apply the saved profile, open the mic.
   Start-Sleep -Seconds 30
 

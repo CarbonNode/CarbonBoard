@@ -446,14 +446,24 @@ export class ChainWatch {
     const silentFor = now - this.captureSilentSince;
     if (silentFor < CAPTURE_SILENT_MS) return;
 
+    // A microphone CAN read exactly 0 for minutes. The Astro A50's own hardware
+    // gate emits digital silence between words, so this heal re-opened a
+    // perfectly good stream 1347 times between 09-17 and 09-19 (every 2 min,
+    // all night), each re-open ~1.5 s of no mic. While the Windows meter on the
+    // endpoint is alive, judgeCapture() is the authority (endpoint loud + app
+    // deaf = dead, healed there); an endpoint that is itself silent is a quiet
+    // room or a mic switched off, and a re-open cannot change that. Heal from
+    // here only when that meter is blind and nothing else can judge.
+    const micMeterAlive = this.micLineAt > 0 && now - this.micLineAt < METER_SILENT_MS;
     if (!this.captureSilentJudged) {
       this.captureSilentJudged = true;
-      this.log(`SILENT  capture reads 0 for ${Math.round(silentFor / 1000)}s -- ${this.describe()}; re-opening the microphone`);
+      this.log(`SILENT  capture reads 0 for ${Math.round(silentFor / 1000)}s -- ${this.describe()}; ${micMeterAlive ? 'endpoint metered, leaving the stream alone' : 'mic meter blind, re-opening the microphone'}`);
     }
     if (now - this.lastCaptureToastAt > CAPTURE_TOAST_EVERY_MS) {
       this.lastCaptureToastAt = now;
-      this.hooks?.toast('Mic is silent - re-opening it', this.hooks.captureMic());
+      this.hooks?.toast(micMeterAlive ? 'Mic is silent' : 'Mic is silent - re-opening it', this.hooks.captureMic());
     }
+    if (micMeterAlive) return;
     if (now - this.lastCaptureHealAt < CAPTURE_HEAL_COOLDOWN_MS) return;
     this.lastCaptureHealAt = now;
     this.lastHealAt = now;

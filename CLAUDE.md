@@ -201,6 +201,36 @@ role. **Do not play clips as a test** — the cable is Discord's microphone, eve
 call hears it. Let his own speech be the signal: a peak on the headset capture session with
 nothing on CABLE Input is the proof.
 
+### "Virtual mic through the A50 broken again" with every check green (2026-09-19)
+
+Sessions were right (CarbonBoard held `Headset Microphone (3- Astro A50 Voice)`, rendered to
+CABLE Input, the game held CABLE Output), the chain watch said alive, `micwatch` said `ok` --
+and he could not be heard. Two faults, neither in the app's routing:
+
+1. **The Windows endpoint volumes had been lowered.** The A50 Voice capture endpoint sat at
+   **50%** and CABLE Output at **48%**. Speech reached the app at ~-36 dBFS and read **15-18**
+   on the gate (threshold 12) where it read 28-45 on 09-17, so the gate opened four times in
+   eighteen hours. Nothing in this app touches endpoint volume; something else lowers it (a
+   game's mic slider, Discord's sensitivity, a driver re-enumeration -- unknown). Fixed by
+   setting both to 100% from the interactive session (`_setvol.ps1`), and **held** from now on:
+   `volguard.ps1` runs inside every `micwatch.ps1` pass and restores the active mic endpoint
+   and CABLE Output to unity, logging `volume  restored <endpoint>  was 50% -> 100%` when it
+   had to. That log line is the evidence for whatever is lowering it; read `micwatch.log` for
+   it before blaming the app again. (Endpoint volume is the WINDOWS level -- distinct from the
+   app's own `micVolume` gain and from the session volume a game sets on itself.)
+2. **The capture-silence heal re-opened a healthy stream every 2 minutes, 1347 times.**
+   `judgeSilence()` in `chain-watch.ts` assumed a live microphone never reads exactly 0. The
+   A50's own hardware gate emits digital silence between words, so every quiet 45 s became a
+   "silent capture" and every 2 min a re-open (~1.5 s of no mic each, and a word lost if he
+   started talking into one). It now heals only when the Windows meter on the mic endpoint is
+   **blind**; while that meter is alive, `judgeCapture()` (endpoint loud + app deaf) is the
+   only judge, and a silent endpoint is left alone and reported as `silent` in the tray.
+
+Diagnose in this order next time: `_who3.ps1` from the interactive session (which app holds
+CABLE Output -- on 09-19 it was **bf6**, not Discord, which had no voice session at all), the
+**endpoint `vol=`** column on the mic and on CABLE Output, then `gate open lvl=` in
+`renderer.log` against the 28-45 a healthy A50 reads, then `chain.log` heal cadence.
+
 ## Playback transport + loudness over the HTTP API (2026-09-15)
 
 - `GET /api/playing` (also embedded as `playback` in `/api/audio/status`, which is what the

@@ -302,9 +302,11 @@ feed read healthy. A profile flip (which re-opens the passthrough) fixed it by h
 `judgeCapture()` in `chain-watch.ts` closes that: with the passthrough on, the renderer's own
 level meter reading **exactly 0 for 45 s** is a capture carrying nothing (a live mic on this rig
 never reads below 5 even between words). It re-opens the passthrough at most every 2 min,
-toasts once and then at most every 30 min while it persists (a mic switched off looks the same
-and is not a fault), announces "Mic is live again" when signal returns, and **never counts
-towards a relaunch**. `chain.log` lines: `SILENT  capture reads 0 for Ns …`, `capture signal
+and **never counts towards a relaunch**. As of 2026-09-19, this fallback only re-opens
+when the Windows mic meter is blind; a metered, quiet microphone is left alone. As of
+2026-09-23, silence and its recovery are log-only: no "Mic is silent" / "Mic is live again"
+popups, since not talking is normal. Automatic refresh timing, tray status, and proven
+dead-feed/recovery alerts remain unchanged. `chain.log` lines: `SILENT  capture reads 0 for Ns …`, `capture signal
 back after Ns`. `/api/audio/status` → `chain.captureSilentForMs` / `captureHeals`; `micwatch`
 logs `capture=signal|SILENT-Ns` on every run.
 

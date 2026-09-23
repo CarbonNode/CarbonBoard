@@ -103,7 +103,6 @@ const METER_SILENT_MS = 6000;    // no line from the meter for this long = it is
 // from 2026-09-16 12:47 to 2026-09-17 13:18 with every check green.
 const CAPTURE_SILENT_MS = 45_000;
 const CAPTURE_HEAL_COOLDOWN_MS = 2 * 60_000;  // re-open at most this often; a re-open of a silent stream is inaudible
-const CAPTURE_TOAST_EVERY_MS = 30 * 60_000;   // remind, but do not nag, while it stays silent (a mic left off is not a fault)
 // The CAPTURE side, judged the same way as the output: by what Windows sees on
 // the microphone endpoint versus what the app's own analyser sees on the stream
 // it opened from that endpoint. 2026-09-17 13:47: the Insta360 endpoint peaked at
@@ -208,7 +207,6 @@ export class ChainWatch {
   private captureSilentJudged = false;
   private captureHeals = 0;
   private lastCaptureHealAt = 0;
-  private lastCaptureToastAt = 0;
 
   private deadSince = 0;
   private deadEvents = 0;
@@ -429,14 +427,13 @@ export class ChainWatch {
     if (!fresh || !t || !t.passthrough) {
       // Nothing to judge (window gone, or the passthrough is off -- including the
       // ~1 s it is off during our own re-open). The clock restarts; the "judged"
-      // flag stays, so a re-open that WORKS is announced when signal appears.
+      // flag stays, so a re-open that WORKS is logged when signal appears.
       this.captureSilentSince = 0;
       return;
     }
     if (t.level > 0) {
       if (this.captureSilentJudged) {
         this.log(`capture signal back after ${Math.round((now - this.captureSilentSince) / 1000)}s of silence`);
-        this.hooks?.toast('Mic is live again', this.hooks.captureMic());
       }
       this.captureSilentSince = 0;
       this.captureSilentJudged = false;
@@ -459,10 +456,8 @@ export class ChainWatch {
       this.captureSilentJudged = true;
       this.log(`SILENT  capture reads 0 for ${Math.round(silentFor / 1000)}s -- ${this.describe()}; ${micMeterAlive ? 'endpoint metered, leaving the stream alone' : 'mic meter blind, re-opening the microphone'}`);
     }
-    if (now - this.lastCaptureToastAt > CAPTURE_TOAST_EVERY_MS) {
-      this.lastCaptureToastAt = now;
-      this.hooks?.toast(micMeterAlive ? 'Mic is silent' : 'Mic is silent - re-opening it', this.hooks.captureMic());
-    }
+    // Silence can simply mean nobody is talking. Keep its fallback refresh and
+    // recovery in the log; only proven dead-feed events above need a popup.
     if (micMeterAlive) return;
     if (now - this.lastCaptureHealAt < CAPTURE_HEAL_COOLDOWN_MS) return;
     this.lastCaptureHealAt = now;

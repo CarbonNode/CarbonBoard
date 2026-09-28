@@ -350,9 +350,9 @@ function withDot(src: Buffer, size: number, rgb: number[]): Buffer {
 function withSlash(src: Buffer, size: number, rgb: number[]): Buffer {
   const out = Buffer.from(src);
   for (let i = 0; i < out.length; i += 4) {
-    out[i] = Math.round(out[i] * 0.4);
-    out[i + 1] = Math.round(out[i + 1] * 0.4);
-    out[i + 2] = Math.round(out[i + 2] * 0.4);
+    out[i] = Math.round(out[i] * 0.75);
+    out[i + 1] = Math.round(out[i + 1] * 0.75);
+    out[i + 2] = Math.round(out[i + 2] * 0.75);
   }
   const half = size * 0.11;
   const rim = half + Math.max(1, size / 16);

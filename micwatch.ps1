@@ -93,6 +93,21 @@ function Test-Chain($wantMic) {
   return [pscustomobject]@{ problems = $bad; mic = $(if ($cbCap.Count -ge 1) { $cbCap[0].dev } else { '(none)' }) }
 }
 
+# OUTPUT endpoint mute guard (2026-09-28). Runs FIRST and unconditionally: game
+# sound does not depend on the mic chain, so it must be checked even when
+# CarbonBoard is down or the passthrough is deliberately off -- both of which
+# exit this script early below. "Not getting sound on maingamingrig (game
+# sound)": the default playback endpoint (Astro A50 Game, default for all three
+# roles) was MUTED at the Windows endpoint level at 100% volume, with cs2
+# rendering into it and every meter reading 0.0000. Nothing in this chain looked
+# at the output side until now. See volguard.ps1's header for the full story and
+# the 'allow-render-mute' escape hatch.
+try {
+  $rg = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'volguard.ps1') -RenderOnly 2>&1 | Where-Object { "$_".Trim() -ne '' })
+  foreach ($l in $rg) { Write-Log ('render  ' + $l) }
+} catch {
+  Write-Log ('render  guard failed -- ' + $_.Exception.Message)
+}
 try {
   $status = (Invoke-WebRequest -UseBasicParsing "$api/api/audio/status" -TimeoutSec 8).Content | ConvertFrom-Json
 } catch {

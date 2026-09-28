@@ -22,6 +22,13 @@ import type { Settings } from './types';
 
 type AudioRig = typeof AudioRigModule;
 
+/**
+ * What the icon can say. The chain verdict's own states, plus the two MUTES --
+ * which are not health states and must not borrow the health dot: a mute is a
+ * switch someone (or something) threw, and the icon has to read as "off".
+ */
+type IconKey = ChainVerdict['state'] | 'muted-output' | 'muted-mic' | 'muted-both';
+
 export interface TrayDeps {
   iconPath: string;
   dataDir: string;
@@ -38,6 +45,9 @@ export interface TrayDeps {
 
 const DEVICE_REFRESH_MS = 30_000;
 const ICON_REFRESH_MS = 2_000;
+// The output endpoint's mute bit costs a short-lived PowerShell to read, so it
+// is polled on its own slower clock rather than on every icon refresh.
+const MUTE_POLL_MS = 15_000;
 
 let tray: Tray | null = null;
 let deps: TrayDeps | null = null;
@@ -48,6 +58,7 @@ let devicesAt = 0;
 let refreshing = false;
 let lastIconState: string | null = null;
 let lastTooltip: string | null = null;
+let outputMuted: boolean | null = null;
 
 export function createTray(d: TrayDeps): Tray {
   deps = d;
@@ -73,8 +84,27 @@ export function createTray(d: TrayDeps): Tray {
   void refreshDevices();
   setInterval(() => { void refreshDevices(); }, DEVICE_REFRESH_MS);
   setInterval(refreshIcon, ICON_REFRESH_MS);
+  void pollOutputMute();
+  setInterval(() => { void pollOutputMute(); }, MUTE_POLL_MS);
   refreshIcon();
   return tray;
+}
+
+/**
+ * Is Windows muting the default playback device? Painted on the icon, because
+ * this is the fault nothing in this app could see: 2026-09-28 the A50 Game
+ * endpoint was muted while reporting 100% volume, so games were silent and the
+ * profile, sessions, cable and chain watch all read perfectly fine. The healing
+ * lives in volguard.ps1 (called every micwatch pass) so there is one actor doing
+ * it; this only reports, and offers the one-click fix in the menu.
+ */
+async function pollOutputMute(): Promise<void> {
+  if (!deps) return;
+  const m = await deps.audioRig.isOutputMuted();
+  if (m !== outputMuted) {
+    outputMuted = m;
+    refreshIcon();
+  }
 }
 
 /** Re-read the device list; the menu is built from the cache so this is off the click path. */
@@ -109,6 +139,22 @@ function buildMenu(): Menu {
   const items: MenuItemConstructorOptions[] = [
     { label: `${mark}  ${v.title}`, enabled: false },
     { label: `    ${v.detail}`, enabled: false },
+    ...(outputMuted ? [
+      { type: 'separator' as const },
+      {
+        label: 'Output is MUTED in Windows - click to unmute',
+        sublabel: `${lastOutput ?? 'The default playback device'} is muted at the endpoint, so nothing can be heard`,
+        click: () => {
+          void (async () => {
+            const ok = await d.audioRig.unmuteOutput();
+            if (ok) outputMuted = false;
+            refreshIcon();
+            d.toast(ok ? 'Output unmuted' : 'Could not unmute the output', null, lastOutput, 3200,
+              ok ? undefined : 'Windows refused the change');
+          })();
+        },
+      },
+    ] : []),
     { type: 'separator' },
     {
       label: 'Restart mic feed',
@@ -228,7 +274,12 @@ function deviceMenu(
 function refreshIcon(): void {
   if (!tray || !deps) return;
   const v = deps.chain.verdict();
-  const key = v.state;
+  const micMuted = !deps.getSettings().micPassthroughEnabled;
+  // A muted output wins: it is the one state where nothing at all can be heard.
+  const key: IconKey = outputMuted && micMuted ? 'muted-both'
+    : outputMuted ? 'muted-output'
+    : micMuted ? 'muted-mic'
+    : v.state;
   if (key !== lastIconState) {
     lastIconState = key;
     try { tray.setImage(iconFor(key)); } catch { /* an icon is never worth a crash */ }
@@ -241,7 +292,18 @@ function refreshIcon(): void {
 }
 
 /** The app icon with a status dot in the corner: none when fine, amber when blind, red when dead or silent. */
-function iconFor(state: ChainVerdict['state']): NativeImage {
+function iconFor(key: IconKey): NativeImage {
+  const slash = key === 'muted-output' || key === 'muted-both' ? [0xff, 0x30, 0x30]
+    : key === 'muted-mic' ? [0xff, 0xb0, 0x20]
+    : null;
+  if (slash) {
+    if (!base16 || !base32) return fallbackIcon();
+    const img = nativeImage.createEmpty();
+    img.addRepresentation({ scaleFactor: 1, width: 16, height: 16, buffer: withSlash(base16.toBitmap(), 16, slash) });
+    img.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: withSlash(base32.toBitmap(), 32, slash) });
+    return img;
+  }
+  const state = key as ChainVerdict['state'];
   const color = state === 'ok' ? null
     : state === 'blind' || state === 'off' ? [0xff, 0xb0, 0x20]
     : [0xff, 0x30, 0x30];
@@ -273,6 +335,38 @@ function withDot(src: Buffer, size: number, rgb: number[]): Buffer {
       const rim = dist > r - Math.max(1, size / 16);
       const [R, G, B] = rim ? [0x20, 0x10, 0x10] : rgb;
       out[i] = B; out[i + 1] = G; out[i + 2] = R; out[i + 3] = 0xff;
+    }
+  }
+  return out;
+}
+
+/**
+ * The muted mark: the whole icon dimmed with a bold diagonal bar across it, the
+ * way "off" is drawn everywhere else. NOT a corner badge -- at 16px a badge is
+ * seven pixels of mush -- and NOT the health dot, which already means something
+ * else on this icon (the feed's verdict). The bar runs top-left to bottom-right,
+ * matching every muted-speaker glyph Windows itself draws.
+ */
+function withSlash(src: Buffer, size: number, rgb: number[]): Buffer {
+  const out = Buffer.from(src);
+  for (let i = 0; i < out.length; i += 4) {
+    out[i] = Math.round(out[i] * 0.4);
+    out[i + 1] = Math.round(out[i + 1] * 0.4);
+    out[i + 2] = Math.round(out[i + 2] * 0.4);
+  }
+  const half = size * 0.11;
+  const rim = half + Math.max(1, size / 16);
+  const [R, G, B] = rgb;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dist = Math.abs(x - y) / Math.SQRT2;
+      if (dist > rim) continue;
+      const i = (y * size + x) * 4;
+      const onRim = dist > half;
+      out[i] = onRim ? 0x14 : B!;
+      out[i + 1] = onRim ? 0x0a : G!;
+      out[i + 2] = onRim ? 0x0a : R!;
+      out[i + 3] = 0xff;
     }
   }
   return out;

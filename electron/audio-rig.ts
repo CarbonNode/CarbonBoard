@@ -188,6 +188,27 @@ interface IPolicyConfig {
   int SetDefaultEndpoint(string device, int role);
   int SetEndpointVisibility(string device, bool visible);
 }
+// The endpoint MIXER (volume + mute), as opposed to IPolicyConfig's routing. It is
+// the WINDOWS level of a device, not any app's own gain, and it is the layer two
+// separate faults have now lived in: the A50 Voice capture endpoint at 50%
+// (2026-09-19) and the A50 Game render endpoint MUTED while reporting 100%
+// volume (2026-09-28, silent games with every check in this app green).
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+  int RegisterControlChangeNotify(IntPtr n);
+  int UnregisterControlChangeNotify(IntPtr n);
+  int GetChannelCount(out int c);
+  int SetMasterVolumeLevel(float l, ref Guid ctx);
+  int SetMasterVolumeLevelScalar(float l, ref Guid ctx);
+  int GetMasterVolumeLevel(out float l);
+  int GetMasterVolumeLevelScalar(out float l);
+  int SetChannelVolumeLevel(int c, float l, ref Guid ctx);
+  int SetChannelVolumeLevelScalar(int c, float l, ref Guid ctx);
+  int GetChannelVolumeLevel(int c, out float l);
+  int GetChannelVolumeLevelScalar(int c, out float l);
+  int SetMute(bool mute, ref Guid ctx);
+  int GetMute(out bool mute);
+}
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
 [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")] class CPolicyConfigClient { }
 
@@ -301,6 +322,33 @@ public static class Audio {
     // and only half the switch appears to work.
     for (int role = 0; role < 3; role++) pc.SetDefaultEndpoint(id, role);
     return true;
+  }
+  static IAudioEndpointVolume VolumeOf(IMMDevice d) {
+    Guid iid = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
+    object o; d.Activate(ref iid, 23, IntPtr.Zero, out o);   // 23 = CLSCTX_ALL
+    return (IAudioEndpointVolume)o;
+  }
+  /**
+   * Is the default PLAYBACK endpoint muted? 1 muted, 0 not, -1 could not tell.
+   * A muted endpoint still reports its full volume, so this bit is the only
+   * thing that distinguishes "nothing can be heard" from "everything is fine":
+   * on 2026-09-28 it was set on the A50 Game endpoint while the profile, the
+   * sessions, the cable and the chain watch all read green and every meter on
+   * that endpoint sat at exactly 0.0000.
+   */
+  public static int DefaultOutputMuted() {
+    try {
+      var e = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+      IMMDevice d; if (e.GetDefaultAudioEndpoint(RENDER, 0, out d) != 0) return -1;
+      bool m; VolumeOf(d).GetMute(out m); return m ? 1 : 0;
+    } catch { return -1; }
+  }
+  /** Clear it. Never touches the LEVEL: those are set per device on purpose. */
+  public static bool UnmuteDefaultOutput() {
+    var e = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+    IMMDevice d; if (e.GetDefaultAudioEndpoint(RENDER, 0, out d) != 0) return false;
+    var v = VolumeOf(d); Guid ctx = Guid.Empty; v.SetMute(false, ref ctx);
+    bool m; v.GetMute(out m); return !m;
   }
 }
 "@
@@ -551,6 +599,30 @@ else { @{ ok = $false } | ConvertTo-Json -Compress }
 
 /** The default playback device as last seen by the watch below (no PowerShell call). */
 export function getLastOutput(): string | null { return lastOutput; }
+
+/**
+ * Is the default playback device muted in Windows? null when it could not be
+ * read. Cheap enough to poll every few seconds (one short-lived PowerShell),
+ * and the tray paints a mute mark from it -- see tray.ts. The healing itself
+ * stays in volguard.ps1 / micwatch.ps1 so there is exactly one actor doing it.
+ */
+export async function isOutputMuted(): Promise<boolean | null> {
+  try {
+    const n = await ps<number>('[Audio]::DefaultOutputMuted() | ConvertTo-Json -Compress', 8_000);
+    return n === 1 ? true : n === 0 ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear that mute bit (the tray's one-click fix). Leaves the level alone. */
+export async function unmuteOutput(): Promise<boolean> {
+  try {
+    return await ps<boolean>('[Audio]::UnmuteDefaultOutput() | ConvertTo-Json -Compress', 8_000);
+  } catch {
+    return false;
+  }
+}
 let lastOutput: string | null = null;
 
 // ── noticing a switch we did not make ────────────────────────────────────────

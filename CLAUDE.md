@@ -269,6 +269,16 @@ and the fault is corrected within one watchdog pass (<= ~75 s).
   sweep to clear a latched one. Interactive session only: `GetAsyncKeyState` in session 0 reads
   session 0's desktop and always says "up". `renderstate.ps1` reports every render endpoint's
   volume/mute with the default marked, and `-Fix` unmutes the default one by hand.
+- **The tray icon says it now.** `electron/tray.ts` polls `audioRig.isOutputMuted()` every 15 s
+  (one short-lived PowerShell into `Audio.DefaultOutputMuted()`, which is why `IAudioEndpointVolume`
+  is now declared in audio-rig.ts's `PS_PRELUDE` alongside `IPolicyConfig`) and paints a **muted
+  mark**: the whole icon dimmed with a bold diagonal bar, red for a muted output, amber for a muted
+  mic, both -> red. The bar WINS over the health dot, because a mute is not a health state -- it is a
+  switch someone or something threw. Deliberately not a corner badge (seven pixels of mush at 16 px)
+  and deliberately not a second coloured dot, since the dot already means the feed's verdict on this
+  icon. The menu grows `Output is MUTED in Windows - click to unmute`, calling `unmuteOutput()`.
+  The app only REPORTS and offers the one click; the healing stays in `volguard.ps1` so that exactly
+  one actor does it and the two cannot fight.
 - **Read the output endpoint before believing a "no sound" report is about the app.** Endpoint
   volume and mute are the Windows layer; nothing in this app sets them, and two separate faults
   now (capture at 50% on 09-19, render muted on 09-28) have been exactly that layer.

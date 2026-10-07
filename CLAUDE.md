@@ -423,14 +423,22 @@ A boot re-enables the passthrough (`enforceAudioRig`), so restarting the app unm
 
 ### The Stream Deck key (`streamdeck/`)
 
-`streamdeck/dev.carbon.carbonboard.sdPlugin` is a dependency-free Node plugin with one action,
-**Mic Mute**; `streamdeck/README.md` has the key faces and the install steps. It polls
-`GET /api/audio/mic` (the flag only) once a second while the key is on screen and presses
-`POST /api/audio/mic {"toggle":true}`. Neither touches the audio stack on purpose:
+`streamdeck/dev.carbon.carbonboard.sdPlugin` is a dependency-free Node plugin with three
+actions: **Mic Mute**, and **Mic Boost Up / Down**, which move the window's own mic slider
+(`micVolume`, 0-200%) 10% a press and show the level on the key. `streamdeck/README.md` has
+the key faces and the install steps. It polls `GET /api/audio/mic` (mute flag + volume) once
+a second while a key is on screen and presses `POST /api/audio/mic` with `{"toggle":true}`
+or `{"volumeStep":0.1}`. Neither touches the audio stack on purpose:
 `/api/audio/status` spawns a PowerShell per call and must never be polled from a key. If
 CarbonBoard does not answer the key shows NO APP rather than a guess. Its log is
 `%APPDATA%\Elgato\StreamDeck\Plugins\dev.carbon.carbonboard.sdPlugin\logs\plugin.log`
 (`(key)` = a press, `(poll)` = a change made somewhere else).
+
+A face drawn at runtime goes out as `data:image/svg+xml,` + `encodeURIComponent(svg)`. Stream
+Deck percent-decodes the URI, so a raw SVG works until it contains a `%` (the boost keys'
+"160%") or a `#` colour, and then the key silently keeps its old picture. Nothing is logged.
+Editing only `bin/plugin.js`? Copy it over and kill the plugin's `node.exe`; Stream Deck
+starts it again by itself, no app restart needed.
 
 Stream Deck only reads plugins and profiles at start and rewrites profiles from memory, so
 to install the plugin or place a key by hand-editing `ProfilesV3\...\manifest.json`: kill

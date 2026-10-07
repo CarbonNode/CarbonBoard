@@ -503,6 +503,12 @@ function getSettings(): Settings {
   return settings as unknown as Settings;
 }
 
+/** What the Stream Deck keys show: is the mic muted, and how loud is it. */
+function micFlags(): { micMuted: boolean; micVolume: number } {
+  const s = getSettings();
+  return { micMuted: !s.micPassthroughEnabled, micVolume: s.micVolume ?? 1 };
+}
+
 function updateSettings(updates: Partial<Settings>): Settings {
   const upsert = db.prepare(
     'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
@@ -1350,12 +1356,13 @@ if (!gotTheLock) {
           return;
         }
 
-        // GET /api/audio/mic -- the mute flag and nothing else. The Stream Deck
-        // key polls this every second to paint itself, so it must not touch the
-        // audio stack: /api/audio/status costs a PowerShell process per call.
+        // GET /api/audio/mic -- the mute flag and the mic volume, nothing else.
+        // The Stream Deck keys poll this every second to paint themselves, so it
+        // must not touch the audio stack: /api/audio/status costs a PowerShell
+        // process per call.
         if (req.method === 'GET' && pathname === '/api/audio/mic') {
           res.writeHead(200);
-          res.end(JSON.stringify({ micMuted: !getSettings().micPassthroughEnabled }));
+          res.end(JSON.stringify(micFlags()));
           return;
         }
 
@@ -1366,7 +1373,7 @@ if (!gotTheLock) {
           req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
           req.on('end', async () => {
             try {
-              const { mute, toggle } = JSON.parse(body || '{}') as { mute?: boolean; toggle?: boolean };
+              const { mute, toggle, volumeStep } = JSON.parse(body || '{}') as { mute?: boolean; toggle?: boolean; volumeStep?: number };
               // `toggle` is the Stream Deck key: flip, toast as the tray does, and
               // answer with the flag alone. A key press should not wait on the
               // PowerShell that audioRig.status() spawns.
@@ -1376,7 +1383,18 @@ if (!gotTheLock) {
                 mainWindow?.webContents.send('settings:updated');
                 showAudioToast(nowMuted ? 'Mic muted' : 'Mic unmuted', audioRig.getCaptureMic(), null);
                 res.writeHead(200);
-                res.end(JSON.stringify({ micMuted: nowMuted }));
+                res.end(JSON.stringify(micFlags()));
+                return;
+              }
+              // `volumeStep` is the Stream Deck boost keys: nudge the passthrough's
+              // gain. It is the window's own mic slider (micVolume, 0..2), so the
+              // slider and the keys can never disagree about how loud the mic is.
+              if (typeof volumeStep === 'number' && Number.isFinite(volumeStep)) {
+                const next = Math.min(2, Math.max(0, (getSettings().micVolume ?? 1) + volumeStep));
+                updateSettings({ micVolume: Math.round(next * 100) / 100 });
+                mainWindow?.webContents.send('settings:updated');
+                res.writeHead(200);
+                res.end(JSON.stringify(micFlags()));
                 return;
               }
               if (mute != null) {

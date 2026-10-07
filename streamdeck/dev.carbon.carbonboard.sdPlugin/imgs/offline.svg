@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
-  <rect width="144" height="144" fill="#33373d"/>
-  <g transform="translate(36 16) scale(3)" fill="none" stroke="#9aa0a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></g>
-  <text x="72" y="126" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="24" fill="#ffffff">NO APP</text>
+  <rect width="144" height="144" fill="rgb(51,55,61)"/>
+  <g transform="translate(36 16) scale(3)" fill="none" stroke="rgb(154,160,166)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></g>
+  <text x="72" y="127" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="24" fill="rgb(255,255,255)">NO APP</text>
 </svg>

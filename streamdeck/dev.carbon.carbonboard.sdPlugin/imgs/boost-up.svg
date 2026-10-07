@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+  <rect width="144" height="144" fill="rgb(16,21,28)"/>
+  <g transform="translate(12 22) scale(2.7)" fill="none" stroke="rgb(232,234,237)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></g>
+  <g fill="none" stroke="rgb(61,220,132)" stroke-width="10" stroke-linecap="round"><path d="M88 54h40"/><path d="M108 34v40"/></g>
+  <text x="72" y="127" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="26" fill="rgb(255,255,255)">BOOST</text>
+</svg>

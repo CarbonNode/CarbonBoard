@@ -1,14 +1,15 @@
-// CarbonBoard's Stream Deck plugin. One action: a key that mutes the mic.
+// CarbonBoard's Stream Deck plugin: a key that mutes the mic, and two that
+// turn it up and down.
 //
 // "The mic" is whatever microphone CarbonBoard is passing through to the cable,
-// so the key follows a profile change with nothing to reconfigure. Mute is
-// CarbonBoard's own passthrough switch (POST /api/audio/mic), the same one the
-// tray and the Cortex soundboard connector use, so all three agree.
+// so the keys follow a profile change with nothing to reconfigure. Mute is
+// CarbonBoard's own passthrough switch and the level is its own mic slider
+// (0-200%), so the keys, the tray and the window always agree.
 //
-// The key shows what CarbonBoard says, never what was last pressed: it reads
-// GET /api/audio/mic once a second while it is on screen. If CarbonBoard does
-// not answer it shows NO APP instead of a guess, because a mute key that says
-// "muted" while the mic is live is worse than no key.
+// The keys show what CarbonBoard says, never what was last pressed: they read
+// GET /api/audio/mic once a second while any of them is on screen. If
+// CarbonBoard does not answer they show NO APP instead of a guess, because a
+// mute key that says "muted" while the mic is live is worse than no key.
 'use strict';
 
 const fs = require('node:fs');
@@ -16,10 +17,20 @@ const path = require('node:path');
 
 const BASE = 'http://127.0.0.1:9502';
 const POLL_MS = 1000;
-const ACTION = 'dev.carbon.carbonboard.micmute';
+const STEP = 0.1; // one press of a boost key, on the app's 0..2 mic volume
+const MUTE = 'dev.carbon.carbonboard.micmute';
+const UP = 'dev.carbon.carbonboard.micboostup';
+const DOWN = 'dev.carbon.carbonboard.micboostdown';
 
 const root = path.join(__dirname, '..');
-const OFFLINE = 'data:image/svg+xml;charset=utf8,' + fs.readFileSync(path.join(root, 'imgs', 'offline.svg'), 'utf8');
+const svg = (name) => fs.readFileSync(path.join(root, 'imgs', name + '.svg'), 'utf8');
+// Stream Deck percent-decodes a data: URI, so the SVG has to be encoded: sent
+// raw, the '%' in "160%" is a broken escape and the key keeps its old face.
+const uri = (text) => 'data:image/svg+xml,' + encodeURIComponent(text);
+const OFFLINE = uri(svg('offline'));
+// The boost faces carry the level where the file says BOOST.
+const BOOST = { [UP]: svg('boost-up'), [DOWN]: svg('boost-down') };
+const boostFace = (action, text) => uri(BOOST[action].replace('>BOOST<', '>' + text + '<'));
 
 const logFile = path.join(root, 'logs', 'plugin.log');
 fs.mkdirSync(path.dirname(logFile), { recursive: true });
@@ -31,28 +42,33 @@ function log(line) {
 const argv = process.argv.slice(2);
 const arg = (name) => argv[argv.indexOf(name) + 1];
 
-const keys = new Set();   // contexts of the keys currently on screen
-let muted;                // true | false | null = CarbonBoard did not answer
+const keys = new Map();   // context -> action, for the keys currently on screen
+let mic;                  // { muted, volume } | null = CarbonBoard did not answer
 let timer = null;
 let reading = false;
 
 const ws = new WebSocket('ws://127.0.0.1:' + arg('-port'));
 const send = (msg) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
+const percent = () => Math.round(mic.volume * 100) + '%';
 
-function paint(context) {
-  if (muted == null) {
+function paint(context, action) {
+  if (action !== MUTE) {
+    send({ event: 'setImage', context, payload: { image: boostFace(action, mic ? percent() : 'NO APP'), target: 0 } });
+    return;
+  }
+  if (!mic) {
     send({ event: 'setImage', context, payload: { image: OFFLINE, target: 0 } });
     return;
   }
   send({ event: 'setImage', context, payload: { target: 0 } }); // back to the state's own image
-  send({ event: 'setState', context, payload: { state: muted ? 1 : 0 } });
+  send({ event: 'setState', context, payload: { state: mic.muted ? 1 : 0 } });
 }
 
 function show(next, why) {
-  if (next === muted) return;
-  muted = next;
-  log('mic ' + (muted == null ? 'UNKNOWN' : muted ? 'MUTED' : 'live') + ' (' + why + ')');
-  for (const context of keys) paint(context);
+  if (mic !== undefined && (next === mic || (next && mic && next.muted === mic.muted && next.volume === mic.volume))) return;
+  mic = next;
+  log('mic ' + (mic ? (mic.muted ? 'MUTED ' : 'live ') + percent() : 'UNKNOWN') + ' (' + why + ')');
+  for (const [context, action] of keys) paint(context, action);
 }
 
 async function call(method, body) {
@@ -64,8 +80,8 @@ async function call(method, body) {
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const json = await res.json();
-  if (typeof json.micMuted !== 'boolean') throw new Error('no micMuted in the answer');
-  return json.micMuted;
+  if (typeof json.micMuted !== 'boolean' || typeof json.micVolume !== 'number') throw new Error('unexpected answer');
+  return { muted: json.micMuted, volume: json.micVolume };
 }
 
 async function poll() {
@@ -76,8 +92,9 @@ async function poll() {
   finally { reading = false; }
 }
 
-async function press(context) {
-  try { show(await call('POST', { toggle: true }), 'key'); }
+async function press(context, action) {
+  const body = action === MUTE ? { toggle: true } : { volumeStep: action === UP ? STEP : -STEP };
+  try { show(await call('POST', body), 'key'); }
   catch (err) {
     show(null, 'key failed: ' + err.message);
     send({ event: 'showAlert', context });
@@ -92,17 +109,17 @@ ws.addEventListener('open', () => {
 ws.addEventListener('message', (ev) => {
   let msg;
   try { msg = JSON.parse(ev.data); } catch { return; }
-  if (msg.action !== ACTION) return;
+  if (msg.action !== MUTE && msg.action !== UP && msg.action !== DOWN) return;
   if (msg.event === 'willAppear') {
-    keys.add(msg.context);
-    if (muted !== undefined) paint(msg.context);
+    keys.set(msg.context, msg.action);
+    if (mic !== undefined) paint(msg.context, msg.action);
     if (!timer) timer = setInterval(poll, POLL_MS);
     void poll();
   } else if (msg.event === 'willDisappear') {
     keys.delete(msg.context);
     if (!keys.size && timer) { clearInterval(timer); timer = null; }
   } else if (msg.event === 'keyDown') {
-    void press(msg.context);
+    void press(msg.context, msg.action);
   }
 });
 

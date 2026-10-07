@@ -1350,6 +1350,15 @@ if (!gotTheLock) {
           return;
         }
 
+        // GET /api/audio/mic -- the mute flag and nothing else. The Stream Deck
+        // key polls this every second to paint itself, so it must not touch the
+        // audio stack: /api/audio/status costs a PowerShell process per call.
+        if (req.method === 'GET' && pathname === '/api/audio/mic') {
+          res.writeHead(200);
+          res.end(JSON.stringify({ micMuted: !getSettings().micPassthroughEnabled }));
+          return;
+        }
+
         // Mute is the soundboard's own passthrough, not a mixer channel: with
         // no mixer in the chain, "mute my mic" means stop passing it through.
         if (req.method === 'POST' && pathname === '/api/audio/mic') {
@@ -1357,7 +1366,19 @@ if (!gotTheLock) {
           req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
           req.on('end', async () => {
             try {
-              const { mute } = JSON.parse(body || '{}') as { mute?: boolean };
+              const { mute, toggle } = JSON.parse(body || '{}') as { mute?: boolean; toggle?: boolean };
+              // `toggle` is the Stream Deck key: flip, toast as the tray does, and
+              // answer with the flag alone. A key press should not wait on the
+              // PowerShell that audioRig.status() spawns.
+              if (toggle) {
+                const nowMuted = getSettings().micPassthroughEnabled;
+                updateSettings({ micPassthroughEnabled: !nowMuted });
+                mainWindow?.webContents.send('settings:updated');
+                showAudioToast(nowMuted ? 'Mic muted' : 'Mic unmuted', audioRig.getCaptureMic(), null);
+                res.writeHead(200);
+                res.end(JSON.stringify({ micMuted: nowMuted }));
+                return;
+              }
               if (mute != null) {
                 updateSettings({ micPassthroughEnabled: !mute });
                 mainWindow?.webContents.send('settings:updated');

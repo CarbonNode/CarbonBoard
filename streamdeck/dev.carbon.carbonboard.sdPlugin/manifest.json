@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "CarbonBoard",
+  "Version": "1.0.0.0",
+  "Author": "Carbon",
+  "UUID": "dev.carbon.carbonboard",
+  "Description": "Controls for the CarbonBoard soundboard running on this PC.",
+  "Category": "CarbonBoard",
+  "CategoryIcon": "imgs/category",
+  "Icon": "imgs/plugin",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24",
+    "Debug": "disabled"
+  },
+  "Actions": [
+    {
+      "UUID": "dev.carbon.carbonboard.micmute",
+      "Name": "Mic Mute",
+      "Icon": "imgs/action",
+      "Tooltip": "Mute or unmute the microphone CarbonBoard is passing through, whichever one that is.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "DisableAutomaticStates": true,
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/live",
+          "Name": "Live"
+        },
+        {
+          "Image": "imgs/muted",
+          "Name": "Muted"
+        }
+      ]
+    }
+  ]
+}

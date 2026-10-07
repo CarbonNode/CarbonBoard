@@ -57,15 +57,16 @@ export function BottomBar() {
     setMicVolume(volume);
   };
 
+  // The setting is the switch; the store starts and stops the stream when it
+  // changes, exactly as it does for the tray and the Stream Deck key.
   const handleMicToggle = async () => {
     console.log('Mic toggle clicked, current state:', state.micPassthroughActive);
     if (state.micPassthroughActive) {
-      console.log('Stopping mic passthrough');
-      stopMicPassthrough();
       await updateSettings({ micPassthroughEnabled: false });
-    } else {
-      console.log('Starting mic passthrough');
+    } else if (state.settings.micPassthroughEnabled) {
+      // On but not running: a start that failed. Try it again.
       await startMicPassthrough();
+    } else {
       await updateSettings({ micPassthroughEnabled: true });
     }
   };

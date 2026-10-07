@@ -398,3 +398,42 @@ row with a peak and the CABLE Input row at 0.0000 is the whole diagnosis. Discor
 fine that afternoon once its Input Device was put back on CABLE Output ??? it had been moved
 to the lapel directly as a workaround, which is why "the virtual mic isn't showing" looked
 like a Discord problem first.
+
+## Mute is the setting, and the setting is the switch (2026-10-06)
+
+"Mute my mic" is `micPassthroughEnabled = false`. Until 2026-10-06 only the in-window mic
+button actually stopped the stream (it called `stopMicPassthrough()` itself and then saved
+the setting). Every other mute -- the tray's "Mute mic", `POST /api/audio/mic`, the Cortex
+`soundboard-<node>__mic` tool -- only flipped the flag: the tray icon and the API said
+MUTED while the microphone kept going out to the cable and Discord heard every word. It was
+found the first time a Stream Deck key made mute a thing that gets pressed mid-call.
+
+Now, in `src/lib/store.tsx`:
+- one effect follows the setting both ways: off -> `stopMicPassthrough()`, on -> start;
+- `startMicPassthrough()` refuses to open the mic while the setting is off. A dozen recovery
+  paths (default-device change, health check, ended track, chain-watch heal) end in a call to
+  it and none of them asked, so any of them could have re-opened a muted mic. Keep the guard
+  in that one place; do not sprinkle checks at the call sites.
+- `BottomBar`'s button just flips the setting like everything else.
+
+Proof it is muted is the cable, not the flag: `chain.cablePeak` in `/api/audio/status` reads
+about 2e-10 (digital silence) while muted and `renderer.log` has `Mic passthrough stopped`.
+A boot re-enables the passthrough (`enforceAudioRig`), so restarting the app unmutes.
+`micwatch.ps1` already leaves a deliberately-off passthrough alone.
+
+### The Stream Deck key (`streamdeck/`)
+
+`streamdeck/dev.carbon.carbonboard.sdPlugin` is a dependency-free Node plugin with one action,
+**Mic Mute**; `streamdeck/README.md` has the key faces and the install steps. It polls
+`GET /api/audio/mic` (the flag only) once a second while the key is on screen and presses
+`POST /api/audio/mic {"toggle":true}`. Neither touches the audio stack on purpose:
+`/api/audio/status` spawns a PowerShell per call and must never be polled from a key. If
+CarbonBoard does not answer the key shows NO APP rather than a guess. Its log is
+`%APPDATA%\Elgato\StreamDeck\Plugins\dev.carbon.carbonboard.sdPlugin\logs\plugin.log`
+(`(key)` = a press, `(poll)` = a change made somewhere else).
+
+Stream Deck only reads plugins and profiles at start and rewrites profiles from memory, so
+to install the plugin or place a key by hand-editing `ProfilesV3\...\manifest.json`: kill
+`StreamDeck.exe`, edit, start it again through the launcher connector. Third-party plugin
+manifests there may be encrypted (Elgato's Discord one starts with `ELGATO`); its action
+UUIDs are readable in its `en.json`.

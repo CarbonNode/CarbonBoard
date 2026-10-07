@@ -1294,6 +1294,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const startMicPassthrough = useCallback(async () => {
     console.log('startMicPassthrough called');
 
+    // Muted means muted. Every recovery path in this file (a device change, the
+    // health check, a track that ended, the chain watch) ends in a call here,
+    // and none of them asks whether the mic is supposed to be on. This is the
+    // one place that does, so a muted mic cannot be re-opened behind your back.
+    if (!settingsRef.current.micPassthroughEnabled) {
+      console.log('Mic passthrough: muted, not opening the mic');
+      return;
+    }
+
     // Claim this attempt. Any start already in flight is now stale and must
     // close whatever it opens instead of leaking it.
     const gen = ++micStartGenRef.current;
@@ -1891,9 +1900,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.settings.monitorDeviceId, state.playingSounds]);
 
-  // Auto-start mic passthrough if enabled on load
+  // The setting is the switch: start the passthrough when it goes on, stop it
+  // when it goes off. The stop half was missing until 2026-10-06, so a mute
+  // from anywhere but this window's own button (the tray, the HTTP API, the
+  // Stream Deck key) flipped the flag, showed MUTED everywhere, and left the
+  // microphone going out to the cable. Discord heard every word.
   useEffect(() => {
-    if (state.settings.micPassthroughEnabled && !state.micPassthroughActive && !state.isLoading) {
+    if (state.isLoading) return;
+    if (!state.settings.micPassthroughEnabled) {
+      stopMicPassthrough();
+    } else if (!state.micPassthroughActive) {
       startMicPassthrough();
     }
   }, [state.settings.micPassthroughEnabled, state.isLoading]);

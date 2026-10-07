@@ -1,5 +1,5 @@
 // CarbonBoard's Stream Deck plugin: a key that mutes the mic, and two that
-// turn it up and down.
+// turn it up and down. The Discord call keys live in discord.js.
 //
 // "The mic" is whatever microphone CarbonBoard is passing through to the cable,
 // so the keys follow a profile change with nothing to reconfigure. Mute is
@@ -14,6 +14,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const discord = require('./discord');
 
 const BASE = 'http://127.0.0.1:9502';
 const POLL_MS = 1000;
@@ -50,6 +51,7 @@ let reading = false;
 const ws = new WebSocket('ws://127.0.0.1:' + arg('-port'));
 const send = (msg) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 const percent = () => Math.round(mic.volume * 100) + '%';
+discord.start({ send, log, pluginUUID: arg('-pluginUUID') });
 
 function paint(context, action) {
   if (action !== MUTE) {
@@ -109,6 +111,7 @@ ws.addEventListener('open', () => {
 ws.addEventListener('message', (ev) => {
   let msg;
   try { msg = JSON.parse(ev.data); } catch { return; }
+  if (discord.handles(msg.action)) { discord.onMessage(msg); return; }
   if (msg.action !== MUTE && msg.action !== UP && msg.action !== DOWN) return;
   if (msg.event === 'willAppear') {
     keys.set(msg.context, msg.action);

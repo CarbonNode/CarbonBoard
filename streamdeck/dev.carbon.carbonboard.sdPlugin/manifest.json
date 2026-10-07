@@ -1,10 +1,10 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "Name": "CarbonBoard",
-  "Version": "1.1.0.0",
+  "Version": "1.2.0.0",
   "Author": "Carbon",
   "UUID": "dev.carbon.carbonboard",
-  "Description": "Controls for the CarbonBoard soundboard running on this PC.",
+  "Description": "Controls for the CarbonBoard soundboard running on this PC, and per-person volume for the Discord call you are in.",
   "Category": "CarbonBoard",
   "CategoryIcon": "imgs/category",
   "Icon": "imgs/plugin",
@@ -74,6 +74,110 @@
           "Image": "imgs/boost-up"
         }
       ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discordchannel",
+      "Name": "Discord Call",
+      "Icon": "imgs/action-call",
+      "Tooltip": "Shows the Discord voice channel you are in. Press to open a page of the people in it, with volume up and down for each.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-channel"
+        }
+      ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discordback",
+      "Name": "Discord Call: Back",
+      "Icon": "imgs/action-back",
+      "Tooltip": "Leaves the Discord call page.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-back"
+        }
+      ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discorduser",
+      "Name": "Discord Call: Person",
+      "Icon": "imgs/action-user",
+      "Tooltip": "One person in the call: picture, name and how loud they are for you. Press to mute or unmute them for yourself.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-user"
+        }
+      ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discordvolup",
+      "Name": "Discord Call: Louder",
+      "Icon": "imgs/action-plus",
+      "Tooltip": "Turns one person in the call up by 10%, for you only.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-volup"
+        }
+      ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discordvoldown",
+      "Name": "Discord Call: Quieter",
+      "Icon": "imgs/action-minus",
+      "Tooltip": "Turns one person in the call down by 10%, for you only.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-voldown"
+        }
+      ]
+    },
+    {
+      "UUID": "dev.carbon.carbonboard.discordnext",
+      "Name": "Discord Call: Next People",
+      "Icon": "imgs/action-next",
+      "Tooltip": "Shows the next four people when more than four are in the call.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/discord-next"
+        }
+      ]
+    }
+  ],
+  "Profiles": [
+    {
+      "Name": "CarbonBoard Discord",
+      "DeviceType": 0,
+      "ReadOnly": false,
+      "DontAutoSwitchWhenInstalled": true
     }
   ]
 }

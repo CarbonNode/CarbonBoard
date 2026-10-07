@@ -423,7 +423,7 @@ A boot re-enables the passthrough (`enforceAudioRig`), so restarting the app unm
 
 ### The Stream Deck key (`streamdeck/`)
 
-`streamdeck/dev.carbon.carbonboard.sdPlugin` is a dependency-free Node plugin with three
+`streamdeck/dev.carbon.carbonboard.sdPlugin` is a dependency-free Node plugin. Its mic
 actions: **Mic Mute**, and **Mic Boost Up / Down**, which move the window's own mic slider
 (`micVolume`, 0-200%) 10% a press and show the level on the key. `streamdeck/README.md` has
 the key faces and the install steps. It polls `GET /api/audio/mic` (mute flag + volume) once
@@ -439,6 +439,21 @@ Deck percent-decodes the URI, so a raw SVG works until it contains a `%` (the bo
 "160%") or a `#` colour, and then the key silently keeps its old picture. Nothing is logged.
 Editing only `bin/plugin.js`? Copy it over and kill the plugin's `node.exe`; Stream Deck
 starts it again by itself, no app restart needed.
+
+**Discord Call keys (2026-10-06).** `bin/discord.js` adds a key that shows the voice channel
+you are in and opens a bundled page (`CarbonBoard Discord`) of the people in it, with volume
+up / down and mute for each, for you only. It signs in to the local Discord client the way
+Discord's StreamKit overlay does, so it needs no Discord application and no secret, and it
+does not go through the app at all. Read `streamdeck/README.md` before touching it. What was
+tried first and why it was dropped: the third-party `cz.danol.discordmixer` plugin and the
+app's own `electron/discord-rpc.ts` both need a Discord application's client secret; the one
+in `discord-rpc.ts` is dead (`invalid_client`), creating a new application is behind an
+animated hCaptcha, and resetting an existing one's secret needs a password re-check that
+refused the vault password. So `/api/discord/*` in the app is still broken; point it at the
+same StreamKit sign-in if the in-app mixer is ever wanted again. `taskkill /F /T /IM
+StreamDeck.exe` from the agent shell kills only the plugins' console hosts and leaves the
+app running: use `Stop-Process` on the `StreamDeck` process, and check it is gone before
+editing a profile.
 
 Stream Deck only reads plugins and profiles at start and rewrites profiles from memory, so
 to install the plugin or place a key by hand-editing `ProfilesV3\...\manifest.json`: kill

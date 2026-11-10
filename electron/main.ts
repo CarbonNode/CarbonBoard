@@ -1255,6 +1255,15 @@ if (!gotTheLock) {
         // POST /api/play-clip — play by CLIP-SERVER id, the library everything
         // else speaks. Pulls the clip first if this PC has never seen it, so a
         // sound uploaded from a phone thirty seconds ago still works.
+        //
+        // ONE PART of a clip is asked for as `<clip id>#t=<start>,<end>` (seconds
+        // in the clip's own file, the axis trimStart counts on) — the soundboard
+        // overlay in Cortex Desktop, where you drag over a clip's words and play
+        // just that line. It rides on the id because the path from there to here
+        // (gateway → node agent → this) forwards the clip id and the volume and
+        // nothing else, and a field it did not know would be dropped silently.
+        // A CarbonBoard too old to read the suffix answers "not in the library",
+        // which is the honest answer, rather than playing the whole clip.
         if (req.method === 'POST' && pathname === '/api/play-clip') {
           let body = '';
           req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
@@ -1266,16 +1275,25 @@ if (!gotTheLock) {
                 res.end(JSON.stringify({ error: 'clipId required' }));
                 return;
               }
-              const soundId = await ensureClip(clipId);
+              const part = /^(.+?)#t=([\d.]+),([\d.]+)$/.exec(clipId);
+              const range = part
+                ? { start: Math.max(0, Number(part[2])), end: Number(part[3]) }
+                : null;
+              if (range && !(range.end - range.start >= 0.02)) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'That part is too short to play' }));
+                return;
+              }
+              const soundId = await ensureClip(part ? part[1] : clipId);
               if (!soundId) {
                 res.writeHead(404);
                 res.end(JSON.stringify({ error: `Clip ${clipId} is not in the library` }));
                 return;
               }
               const sound = getSound(soundId);
-              mainWindow?.webContents.send('hotkey:triggered', soundId);
+              mainWindow?.webContents.send('hotkey:triggered', soundId, range ?? undefined);
               res.writeHead(200);
-              res.end(JSON.stringify({ success: true, sound: { id: soundId, name: sound?.name ?? null } }));
+              res.end(JSON.stringify({ success: true, sound: { id: soundId, name: sound?.name ?? null }, ...(range ? { range } : {}) }));
             } catch (err) {
               res.writeHead(500);
               res.end(JSON.stringify({ error: (err as Error).message }));

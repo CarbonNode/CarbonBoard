@@ -138,7 +138,8 @@ export type IpcChannels = {
 
 // Events from main to renderer
 export type IpcEvents = {
-  'hotkey:triggered': (soundId: string) => void;
+  /** `range` plays only those seconds of the file: one part of a clip, asked for as `<id>#t=a,b`. */
+  'hotkey:triggered': (soundId: string, range?: { start: number; end: number }) => void;
   'hotkey:stopAll': () => void;
   'tray:show': () => void;
   'tray:stopAll': () => void;

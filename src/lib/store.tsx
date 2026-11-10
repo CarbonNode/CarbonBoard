@@ -317,7 +317,8 @@ interface AppContextType {
   deleteSound: (id: string) => Promise<void>;
   reorderSounds: (categoryId: string | null, soundIds: string[]) => Promise<void>;
   reorderCategories: (categoryIds: string[]) => Promise<void>;
-  playSound: (sound: Sound) => Promise<void>;
+  /** `range` plays only those seconds of the file instead of the sound's saved trim (one part of a clip). */
+  playSound: (sound: Sound, range?: { start: number; end: number }) => Promise<void>;
   previewSound: (sound: Sound) => Promise<void>;
   stopPreview: () => void;
   getPreviewAudio: () => HTMLAudioElement | null;
@@ -892,8 +893,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Playback operations
-  const playSound = useCallback(async (sound: Sound) => {
+  const playSound = useCallback(async (sound: Sound, range?: { start: number; end: number }) => {
     if (!window.electronAPI) return;
+    // One part of the clip, picked somewhere else (the soundboard overlay's drag over its
+    // words). It stands in for the saved trim for this play only; nothing is written.
+    const from = range ? Math.max(0, range.start) : sound.trimStart;
+    const until = range ? range.end : sound.trimEnd;
 
     // Check concurrent playback setting
     if (!state.settings.allowConcurrentPlayback) {
@@ -961,15 +966,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         monitorRouted = await attachGain(monitorAudio, monitorDevice === 'default' ? null : monitorDevice, monGain);
         if (monitorRouted) contexts.push(monitorRouted.ctx);
         else monitorAudio.volume = Math.min(1, Math.max(0, monGain));
-        monitorAudio.currentTime = sound.trimStart;
+        monitorAudio.currentTime = from;
       }
 
       // Set start time
-      audio.currentTime = sound.trimStart;
+      audio.currentTime = from;
 
       // Handle end time
       const handleTimeUpdate = () => {
-        if (sound.trimEnd !== null && audio.currentTime >= sound.trimEnd) {
+        if (until !== null && until !== undefined && audio.currentTime >= until) {
           audio.pause();
           if (monitorAudio) monitorAudio.pause();
           audio.dispatchEvent(new Event('ended'));
@@ -1181,7 +1186,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
 
-    const unsubscribeHotkey = window.electronAPI.onHotkeyTriggered(async (soundId) => {
+    const unsubscribeHotkey = window.electronAPI.onHotkeyTriggered(async (soundId, range) => {
       let sound = state.sounds.find((s) => s.id === soundId);
       if (!sound) {
         // A clip the sync pulled after this window loaded is in the DB but
@@ -1192,7 +1197,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (sound) dispatch({ type: 'ADD_SOUND', payload: sound });
       }
       if (sound) {
-        playSound(sound);
+        playSound(sound, range);
       }
     });
 

@@ -145,7 +145,8 @@ export type IpcChannels = {
 
 // Events from main to renderer
 export type IpcEvents = {
-  'hotkey:triggered': (soundId: string) => void;
+  /** `range` plays only those seconds of the file: one part of a clip, asked for as `<id>#t=a,b`. */
+  'hotkey:triggered': (soundId: string, range?: { start: number; end: number }) => void;
   'hotkey:stopAll': () => void;
   'hotkey:pauseResume': () => void;
   'tray:show': () => void;
@@ -243,7 +244,7 @@ export interface ElectronAPI {
   showWindow: () => void;
 
   // Events
-  onHotkeyTriggered: (callback: (soundId: string) => void) => () => void;
+  onHotkeyTriggered: (callback: (soundId: string, range?: { start: number; end: number }) => void) => () => void;
   onStopAll: (callback: () => void) => () => void;
   onPauseResume: (callback: () => void) => () => void;
   onTrayShow: (callback: () => void) => () => void;

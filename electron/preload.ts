@@ -104,8 +104,8 @@ const electronAPI = {
   showWindow: (): void => ipcRenderer.send('window:show'),
 
   // Event listeners
-  onHotkeyTriggered: (callback: (soundId: string) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, soundId: string) => callback(soundId);
+  onHotkeyTriggered: (callback: (soundId: string, range?: { start: number; end: number }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, soundId: string, range?: { start: number; end: number }) => callback(soundId, range);
     ipcRenderer.on('hotkey:triggered', handler);
     return () => ipcRenderer.removeListener('hotkey:triggered', handler);
   },

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
+import { appliedGain } from '../../shared/applied-gain';
 import type { Category, SubCategory, SubCategoryUpdate, Sound, Settings, AudioDevice, ViewMode } from '../../shared/types';
 import { findDeviceByLabel } from './deviceLabel';
 // VAD disabled - doesn't work in packaged Electron due to ASAR/WASM issues
@@ -1942,6 +1943,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           duration: Math.max(0, end - start),
           paused: playing.paused,
           startedAt: playing.startedAt,
+          // What each output is really set to, read from this sound's own nodes at this moment (not from the setting):
+          // how a remote "You hear" or "Everyone hears" slider can be seen to have landed without recording anything.
+          out: appliedGain(playing.audio, playing.gain),
+          monitor: appliedGain(playing.monitorAudio, playing.monitorGain),
         });
       });
       report({ sounds, at: Date.now() });

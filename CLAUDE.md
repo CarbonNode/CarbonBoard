@@ -300,6 +300,14 @@ and the fault is corrected within one watchdog pass (<= ~75 s).
   `allowConcurrentPlayback`, `masterVolume`, `monitorVolume`. The renderer reports it over
   `playback:state` 4x a second while anything plays (`store.tsx`, next to the mic
   telemetry); a report older than 3 s is answered as empty rather than frozen.
+- **Each playing sound says what its outputs are really set to** (2026-11-12, `shared/applied-gain.ts`; not installed on
+  the rig until its own release). In `/api/playing`, every sound carries `out` and `monitor`:
+  `{ path: 'gain' | 'element' | 'off', applied, running }`, read from that sound's own nodes four times a second, never
+  from the setting. `gain`: through a GainNode, so it can pass 100% (`applied` is node gain x the element's volume).
+  `element`: the context could not be put on that device, so the element's volume is all there is and 100% is the
+  ceiling. `off`: no monitor copy exists. It is there so a remote "You hear" slider (Cortex Desktop's popout and dock)
+  can be SEEN to land without recording his headphones, which he has refused. It is CarbonBoard reporting its own
+  state: it cannot show a device is plugged in, unmuted in Windows or on his head. Test: `npm test`.
 - `POST /api/pause` and `POST /api/stop` now take an optional body `{ action?: pause|resume|toggle,
   soundId? | clipId? }` ??? one clip while several are layered. No body = the old behaviour
   (toggle the last-started clip / stop everything). Delivered to the renderer as

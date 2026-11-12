@@ -55,8 +55,11 @@ export type ViewMode = 'grid' | 'list';
 
 // Playback transport shared with the renderer (mirrored in shared/types.ts; the
 // electron tsconfig's rootDir keeps this side from importing that file).
+/** What one output of a playing sound is really set to (mirrors shared/applied-gain.ts, which the renderer fills in). */
+export interface AppliedGain { path: 'gain' | 'element' | 'off'; applied: number | null; running: boolean }
 export interface PlayingSoundInfo {
   id: string; name: string; position: number; duration: number; paused: boolean; startedAt: number;
+  out?: AppliedGain; monitor?: AppliedGain;
 }
 export interface PlaybackTelemetry { sounds: PlayingSoundInfo[]; at: number }
 export interface PlaybackCommand { action: 'pause' | 'resume' | 'toggle' | 'stop' | 'seek'; soundId?: string; position?: number }

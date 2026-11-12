@@ -1,3 +1,5 @@
+import type { AppliedGain } from './applied-gain';
+
 // ============================================================
 // CarbonBoard Shared Types
 // ============================================================
@@ -165,6 +167,10 @@ export interface PlayingSoundInfo {
   paused: boolean;
   /** Epoch ms the clip was started, so a remote UI can interpolate between polls. */
   startedAt: number;
+  /** What its cable output is really set to, read from the node (shared/applied-gain.ts). */
+  out?: AppliedGain;
+  /** What its monitor output (his own headphones) is really set to; path "off" when there is none. */
+  monitor?: AppliedGain;
 }
 
 export interface PlaybackTelemetry {

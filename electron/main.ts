@@ -1323,7 +1323,9 @@ if (!gotTheLock) {
         }
 
         // GET /api/playing -- the transport: what is playing, how far in, paused
-        // or not, plus the layering flag and the two loudness knobs.
+        // or not, plus the layering flag and the two loudness knobs. Each sound
+        // also says what its two outputs are REALLY set to (`out`, `monitor`:
+        // shared/applied-gain.ts), which is how a remote slider is seen to land.
         if (req.method === 'GET' && pathname === '/api/playing') {
           res.writeHead(200);
           res.end(JSON.stringify(playbackView()));

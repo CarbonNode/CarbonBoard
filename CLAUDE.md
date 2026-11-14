@@ -5,8 +5,8 @@
 - Build installer: `npm run build && npx electron-builder --win`
 - Installer output: `dist/CarbonBoard Setup 1.0.0.exe`
 - When rebuilding the installer, always upload it to the GitHub release (`gh release`)
-- **Deploying to MAINGAMINGRIG: commit, push, then Conduit `deploy { project: "CarbonBoard" }`**
-  (`deploy.conduit.json` -> `scripts/deploy.ps1`, 2026-11-13). It fast-forwards
+- **Deploying to MAINGAMINGRIG: commit, push, then Conduit `deploy { project: "cortex-console", env: "prod-carbonboard", ref: <full sha> }`**
+  (Carbon Cortex `deploy.conduit.json` env `prod-carbonboard` -> `scripts/deploy-entry.ps1` -> `scripts/deploy.ps1`, 2026-11-13; the project is `cortex-console`, the ref a full CarbonBoard sha). It fast-forwards
   `C:\Programming\CarbonBoard` to the ref, builds, keeps `resources\app.asar.previous`, swaps
   `app.asar` + `app.asar.unpacked` into the installed app, starts it in the desktop session and
   passes only when `main.log` says `ready` and `:9502` answers; otherwise it restores the previous

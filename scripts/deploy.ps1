@@ -1,9 +1,11 @@
 # Deploy CarbonBoard on MAINGAMINGRIG at an exact commit: build, swap the installed app's
 # resources, start it again, prove it is up, roll back if it is not.
 #
-# Run by Conduit's `deploy { project: "CarbonBoard" }` (deploy.conduit.json), which fast-forwards
-# this checkout to the ref first and runs this from an interactive one-shot task, i.e. as the
-# signed-in user in the desktop session -- the session CarbonBoard has to live in.
+# Run by Conduit's `deploy { project: "cortex-console", env: "prod-carbonboard", ref: <full sha> }`
+# (the recipe lives in Carbon Cortex's deploy.conduit.json: CarbonBoard has no Conduit hub clone).
+# The recipe launches scripts/deploy-entry.ps1's text through launcher-MAINGAMINGRIG__launch, i.e.
+# as the signed-in user in the desktop session -- the session CarbonBoard has to live in; the
+# entry fast-forwards this checkout to the ref and then runs this file.
 #
 # Why swap app.asar instead of running the NSIS installer: the installer has to run in the user's
 # session through the launcher, re-registers shortcuts, and leaves nothing to roll back to. The
@@ -50,6 +52,9 @@ $built = Join-Path $root 'dist\win-unpacked\resources'
 $asar = Join-Path $built 'app.asar'
 if (-not (Test-Path $asar) -or (Get-Item $asar).LastWriteTime -lt $t0) { Fail 'no fresh app.asar in dist\win-unpacked' }
 $newHash = (Get-FileHash $asar -Algorithm SHA256).Hash
+# next build rewrites these tracked caches; put them back so the next deploy's clean-tree check
+# reads the commit, not this build's leftovers.
+& git checkout -- tsconfig.tsbuildinfo next-env.d.ts 2>$null
 
 # ── 3. find the installed app ────────────────────────────────────────────────
 $running = Get-Process CarbonBoard -ErrorAction SilentlyContinue | Where-Object Path | Select-Object -First 1

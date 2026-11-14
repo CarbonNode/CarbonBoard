@@ -1,7 +1,12 @@
 {
   "project": "CarbonBoard",
-  "aliases": ["carbonboard", "soundboard-rig"],
-  "boxes": ["MAINGAMINGRIG"],
+  "aliases": [
+    "carbonboard",
+    "soundboard-rig"
+  ],
+  "boxes": [
+    "MAINGAMINGRIG"
+  ],
   "defaultEnv": "prod",
   "environments": {
     "prod": {
@@ -11,7 +16,7 @@
       "run": "set GIT_TERMINAL_PROMPT=0&& set GCM_INTERACTIVE=never&& git fetch --quiet origin && git merge --ff-only {ref} && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\deploy.ps1 -Ref {ref}",
       "timeoutMin": 20,
       "tier": "prod",
-      "how": "CarbonBoard (soundboard, virtual-mic passthrough, audio profiles, tray) on MAINGAMINGRIG. Fast-forwards C:\\Programming\\CarbonBoard to the named commit (never backwards; refuses a dirty tracked tree), builds it (next build + tsc + electron-builder --dir), keeps resources\\app.asar.previous, swaps app.asar and app.asar.unpacked into the installed app and starts it in the desktop session. Verified when main.log says ready after the start and :9502 answers; otherwise the previous build is restored. The virtual mic drops for the few seconds CarbonBoard is restarting. Does not touch the Stream Deck plugin (streamdeck/), whose install is separate."
+      "how": "CarbonBoard (soundboard, virtual-mic passthrough, audio profiles, tray) on MAINGAMINGRIG. Fast-forwards C:\\Programming\\CarbonBoard to the named commit (never backwards; refuses a dirty tracked tree), builds it (next build + tsc + electron-builder --dir), keeps resources\\app.asar.previous, swaps app.asar and app.asar.unpacked into the installed app and starts it in the desktop session. Verified when main.log says ready after the start and :9502 answers; otherwise the previous build is restored. The virtual mic drops for the few seconds CarbonBoard is restarting. Does not touch the Stream Deck plugin (streamdeck/), whose install is separate. NOTE: Conduit reads this file only from a hub clone, which CarbonBoard does not have yet; the live recipe is Carbon Cortex's cortex-console prod-carbonboard (launcher + scripts/deploy-entry.ps1). The script kind also cannot create its task on MAINGAMINGRIG (the agent is SYSTEM: 'No mapping between account names and security IDs')."
     }
   }
 }

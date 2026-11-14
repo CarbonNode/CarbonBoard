@@ -19,6 +19,8 @@ import * as fs from 'fs';
 import type { ChainWatch, ChainVerdict } from './chain-watch';
 import type * as AudioRigModule from './audio-rig';
 import type { Settings } from './types';
+import { isRestarting, isStuck, restartStreamDeck, watchDecks, type DeckState } from './streamdeck-health';
+import * as path from 'path';
 
 type AudioRig = typeof AudioRigModule;
 
@@ -59,6 +61,7 @@ let refreshing = false;
 let lastIconState: string | null = null;
 let lastTooltip: string | null = null;
 let outputMuted: boolean | null = null;
+let decks: () => DeckState[] = () => [];
 
 export function createTray(d: TrayDeps): Tray {
   deps = d;
@@ -86,6 +89,12 @@ export function createTray(d: TrayDeps): Tray {
   setInterval(refreshIcon, ICON_REFRESH_MS);
   void pollOutputMute();
   setInterval(() => { void pollOutputMute(); }, MUTE_POLL_MS);
+  // A deck the Stream Deck app dropped while Windows still sees it: say so once,
+  // because its keys just go dead and nothing else on screen changes.
+  decks = watchDecks(deck => {
+    deckLog(`stuck: ${deck.name} (${deck.serial}) not open since ${new Date(deck.droppedAt ?? deck.at).toISOString()}`);
+    d.toast(`${deck.name} stopped responding`, null, null, 9000, 'CarbonBoard tray icon > Reconnect Stream Decks');
+  });
   refreshIcon();
   return tray;
 }
@@ -121,6 +130,28 @@ export async function refreshDevices(): Promise<void> {
   }
 }
 
+// ── Stream Deck ──────────────────────────────────────────────────────────────
+
+function deckLog(msg: string): void {
+  if (!deps) return;
+  try { fs.appendFileSync(path.join(deps.dataDir, 'streamdeck.log'), `${new Date().toISOString()}  ${msg}\n`); } catch { /* logging never breaks the tray */ }
+}
+
+function clock(ms: number | null): string {
+  return ms ? new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'a while ago';
+}
+
+/** Restart the Stream Deck app and toast what the NEW app says, deck by deck. */
+function reconnectDecks(): void {
+  const d = deps!;
+  d.toast('Reconnecting Stream Decks', null, null, 25_000);
+  void restartStreamDeck(deckLog).then(r => {
+    if (r.ok) d.toast(r.back.length ? `Stream Deck back: ${r.back.join(', ')}` : 'Stream Deck restarted', null, null, 4200);
+    else if (r.error) d.toast('Could not reconnect the Stream Deck', null, null, 7000, r.error);
+    else d.toast('Stream Deck restarted', null, null, 9000, `${r.missing.join(', ')} still not answering - unplug it and plug it back in`);
+  });
+}
+
 // ── the menu ─────────────────────────────────────────────────────────────────
 
 function buildMenu(): Menu {
@@ -136,6 +167,8 @@ function buildMenu(): Menu {
     (!p.mic || same(p.mic, captureMic)) && (!p.output || same(p.output, lastOutput)))?.name ?? null;
 
   const mark = v.state === 'ok' ? '●' : v.state === 'off' ? '○' : '✕';
+  const stuck = decks().filter(s => isStuck(s));
+  const reconnecting = isRestarting();
   const items: MenuItemConstructorOptions[] = [
     { label: `${mark}  ${v.title}`, enabled: false },
     { label: `    ${v.detail}`, enabled: false },
@@ -155,6 +188,12 @@ function buildMenu(): Menu {
         },
       },
     ] : []),
+    ...stuck.map<MenuItemConstructorOptions>(s => ({
+      label: reconnecting ? `Reconnecting ${s.name}...` : `${s.name} is not responding - click to reconnect`,
+      sublabel: `Plugged in, but the Stream Deck app dropped it at ${clock(s.droppedAt ?? s.at)}`,
+      enabled: !reconnecting,
+      click: reconnectDecks,
+    })),
     { type: 'separator' },
     {
       label: 'Restart mic feed',
@@ -190,7 +229,7 @@ function buildMenu(): Menu {
               .catch(err => d.toast(p.name, null, null, 5200, err instanceof Error ? err.message : String(err)));
           },
         }))
-        : [{ label: 'No profiles (SoundSwitch config not found)', enabled: false }],
+        : [{ label: 'No profiles (audio-profiles.json is empty)', enabled: false }],
     },
     {
       label: 'Microphone',
@@ -234,6 +273,12 @@ function buildMenu(): Menu {
     { type: 'separator' },
     { label: 'Show CarbonBoard', click: () => { const w = d.window(); w?.show(); w?.focus(); } },
     { label: 'Stop all sounds', click: () => d.window()?.webContents.send('hotkey:stopAll') },
+    {
+      label: reconnecting ? 'Reconnecting Stream Decks...' : 'Reconnect Stream Decks',
+      sublabel: 'Restarts the Stream Deck app, for keys that stopped doing anything',
+      enabled: !reconnecting,
+      click: reconnectDecks,
+    },
     { label: 'Open logs folder', sublabel: 'chain.log, renderer.log, main.log', click: () => { void shell.openPath(d.dataDir); } },
     {
       label: 'Restart CarbonBoard',

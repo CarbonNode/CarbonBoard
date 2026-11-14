@@ -350,6 +350,19 @@ in-memory caches so it pops instantly:
   background; "Refresh list" forces it).
 - **Mute mic** (checkbox) flips `micPassthroughEnabled`. Then Show / Stop all / Open logs
   folder / **Restart CarbonBoard** (`app.relaunch`) / Quit.
+- **Reconnect Stream Decks** (2026-11-13, `electron/streamdeck-health.ts`): restarts the Stream
+  Deck app (`Stop-Process` on `StreamDeck` and its plugin children, then `StreamDeck.exe --runinbk`
+  through `Win32_Process.Create` so it lives outside any job object), then reads the NEW
+  `StreamDeck.log` and toasts which decks reported `connected`, or which are still missing.
+  Why: a USB hub reset dropped both decks; the app re-opened the Stream Deck+ but its first
+  re-open of the 15-key MK.2 (every audio-profile key) failed `Preheat Read FW version`, it
+  purged the deck and never retried, while Windows showed the device present and OK. The
+  watch reads the log tail every 10 s (only when its mtime moves): a deck whose last event
+  says plugged in (`attached`, `Problem with connecting HID device`) but not open for 8 s is
+  **stuck** -> one toast per episode and a "<deck> is not responding - click to reconnect" line
+  at the top of the menu. A plain unplug (`disconnected` -> `purged` -> `detached`) is not stuck.
+  Log: `carbonboard-data/streamdeck.log`. Without the app, `pnputil /restart-device
+  "USB\VID_0FD9&PID_0080\<serial>"` from the agent shell (SYSTEM) does the same for one deck.
 
 ### The capture side can die too, and nothing judged it (2026-09-17)
 

@@ -116,6 +116,14 @@ async function pollOutputMute(): Promise<void> {
   }
 }
 
+/**
+ * The device lists the tray keeps warm (re-read every 30 s in the background), for anything else
+ * that must answer at once: the Shift+` overlay's Audio tab reads them through GET /api/audio/pick.
+ */
+export function cachedDevices(): { inputs: string[]; outputs: string[]; at: number } {
+  return { inputs: devices.inputs, outputs: devices.outputs, at: devicesAt };
+}
+
 /** Re-read the device list; the menu is built from the cache so this is off the click path. */
 export async function refreshDevices(): Promise<void> {
   if (!deps || refreshing) return;

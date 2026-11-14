@@ -370,6 +370,18 @@ in-memory caches so it pops instantly:
   Log: `carbonboard-data/streamdeck.log`. Without the app, `pnputil /restart-device
   "USB\VID_0FD9&PID_0080\<serial>"` from the agent shell (SYSTEM) does the same for one deck.
 
+### The device picker API (2026-11-13): Cortex Desktop's Shift+` Audio tab
+
+`GET /api/audio/pick` answers every microphone and playback device with the one in use marked
+(`{ inputs: [{name, current}], outputs: [...], at, micMuted }`), straight from the tray's warm
+device cache (`cachedDevices()` in `electron/tray.ts`, re-read every 30 s; older than a minute is
+re-read first), so it never makes an overlay opening mid-game wait on PowerShell.
+`POST /api/audio/input { name }` sets the mic CarbonBoard CAPTURES (`setCaptureMic`, as the tray's
+Microphone menu), never the Windows default recording device, which stays CABLE Output.
+`POST /api/audio/output { name }` sets the Windows default playback device (`setDefaultOutput`).
+Both refuse a name the lists do not hold (404) and toast like the tray. The cable's own two ends
+are never offered.
+
 ### The capture side can die too, and nothing judged it (2026-09-17)
 
 The mic sat dead from 2026-09-16 12:47 to 2026-09-17 13:18 ??? no gate open in `renderer.log`

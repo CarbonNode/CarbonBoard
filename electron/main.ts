@@ -18,7 +18,7 @@ import type { PlaybackTelemetry, PlaybackCommand } from './types';
 import * as audioRig from './audio-rig';
 import { showAudioToast } from './toast';
 import { ChainWatch, wireRendererLog, type MicTelemetry } from './chain-watch';
-import { createTray as createFeedTray } from './tray';
+import { createTray as createFeedTray, cachedDevices, refreshDevices } from './tray';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as os from 'os';
@@ -1347,6 +1347,64 @@ if (!gotTheLock) {
           } catch (err) {
             res.writeHead(503);
             res.end(JSON.stringify({ error: (err as Error).message }));
+          }
+          return;
+        }
+
+        // ── the device picker (Cortex Desktop's Shift+` overlay, Audio tab, 2026-11-13) ──
+        // "I can pick any of my mics with icons, and audio devices." The same two choices as the
+        // tray's Microphone and Headphones / speakers menus, over HTTP:
+        //   GET  /api/audio/pick    -> every mic and output with the one in use marked. Answered
+        //                              from the tray's warm cache, so an overlay opening mid-game
+        //                              never waits on a PowerShell; a cache older than a minute
+        //                              (or none yet) is re-read first.
+        //   POST /api/audio/input   { name } -> the mic CarbonBoard captures and passes into the
+        //                              cable. NOT the Windows default recording device: that stays
+        //                              CABLE Output, or the clips leave the mic feed.
+        //   POST /api/audio/output  { name } -> the Windows default playback device (all roles).
+        // A name must be one the list holds, so nothing else can be set through here.
+        if (req.method === 'GET' && pathname === '/api/audio/pick') {
+          if (Date.now() - cachedDevices().at > 60_000) await refreshDevices();
+          const { inputs, outputs, at } = cachedDevices();
+          const mic = audioRig.getCaptureMic();
+          const out = audioRig.getLastOutput();
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            ok: true,
+            at,
+            inputs: inputs.filter(n => !audioRig.isCable(n)).map(name => ({ name, current: audioRig.sameDevice(name, mic) })),
+            outputs: outputs.filter(n => !/cable input/i.test(n)).map(name => ({ name, current: audioRig.sameDevice(name, out) })),
+            micMuted: !getSettings().micPassthroughEnabled,
+          }));
+          return;
+        }
+        if (req.method === 'POST' && (pathname === '/api/audio/input' || pathname === '/api/audio/output')) {
+          const body = await readJsonBody(req);
+          const asked = typeof body['name'] === 'string' ? body['name'] : '';
+          const isInput = pathname === '/api/audio/input';
+          const list = isInput
+            ? cachedDevices().inputs.filter(n => !audioRig.isCable(n))
+            : cachedDevices().outputs.filter(n => !/cable input/i.test(n));
+          const name = list.find(n => n === asked) ?? list.find(n => audioRig.sameDevice(n, asked));
+          if (!name) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ ok: false, error: `${asked || 'That device'} is not in the ${isInput ? 'microphone' : 'playback'} list` }));
+            return;
+          }
+          try {
+            if (isInput) {
+              audioRig.setCaptureMic(name);
+              showAudioToast('Microphone', name, audioRig.getLastOutput());
+            } else {
+              const ok = await audioRig.setDefaultOutput(name);
+              if (!ok) throw new Error('Windows did not find that device');
+              showAudioToast('Output', audioRig.getCaptureMic(), name);
+            }
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, name }));
+          } catch (err) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
           }
           return;
         }

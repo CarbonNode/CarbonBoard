@@ -17,7 +17,9 @@ $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-function Say($m) { Write-Output ("{0}  {1}" -f (Get-Date -Format s), $m) }
+# Straight to the console, never the pipeline: a function that calls Say must still return only
+# its own value (Install-From returning @("...", $false) would read as success).
+function Say($m) { [Console]::Out.WriteLine(("{0}  {1}" -f (Get-Date -Format s), $m)) }
 function Fail($m) { Say "CARBONBOARD_DEPLOY_FAIL $m"; exit 1 }
 
 # Start a process that must outlive this task (whatever job object the runner uses): the WMI
